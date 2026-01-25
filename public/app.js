@@ -72,7 +72,7 @@ const menuTimers = {};  // <-- PER-APP TIMER
 function openApp(app) {
   const appname = app;
   app = "/apps/" + app;
-  const rules = appRules[(app + `/${appname}.properties`)] || {
+  const rules = appRules[appname] || {
     maxInstances: -1,
     stack: true,
     resizable: true,
@@ -134,29 +134,31 @@ function openApp(app) {
         return fetch(`/api/apps/${appname}`)
           .then(r => r.json())
           .then(jsFiles => {
-            loadedModules[app] = [];
-            const loadPromises = jsFiles.map(file => {
-              return new Promise((resolve) => {
-                var modules = document.createElement("script");
-                modules.type = "module";
-                modules.src = `${app}/${file}`;
-                modules.onload = resolve;
-                modules.onerror = resolve;
-                document.body.appendChild(modules);
-                loadedModules[app].push(modules);
-              });
-            });
+            const loadPromises = jsFiles.map(file => import(`${app}/${file}`));
             return Promise.all(loadPromises);
           })
-          .then(() => {
-            if (app === "/apps/software") {
-              window.softwareApp?.init?.(win.querySelector(".window-body"));
+          .then(modules => {
+            loadedModules[app] = modules;
+            // Call init for known apps
+            const softwareModule = modules.find(m => m.softwareApp);
+            if (softwareModule) {
+              softwareModule.softwareApp.init(win.querySelector(".window-body"));
+            }
+            const osModule = modules.find(m => m.init);
+            if (osModule) {
+              osModule.init();
             }
           })
-          .catch(err => window.alert('Failed to load JS files:', err));
+          .catch(err => console.error('Failed to load JS modules:', err));
       } else {
-        if (app === "/apps/software") {
-          window.softwareApp?.init?.(win.querySelector(".window-body"));
+        // Already loaded, call init
+        const softwareModule = loadedModules[app].find(m => m.softwareApp);
+        if (softwareModule) {
+          softwareModule.softwareApp.init(win.querySelector(".window-body"));
+        }
+        const osModule = loadedModules[app].find(m => m.init);
+        if (osModule) {
+          osModule.init();
         }
       }
     })
@@ -216,7 +218,6 @@ function closeWindow(win) {
   win.remove();
   updateTaskbarIndicator(app);
   if (loadedModules[app]) {
-    loadedModules[app].forEach(mod => mod.remove());
     delete loadedModules[app];
   }
 }

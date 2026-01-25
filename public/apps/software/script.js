@@ -1,4 +1,4 @@
-window.softwareApp = (function () {
+const softwareApp = (function () {
   let softwareList = [];
 
   async function loadSoftware(grid) {
@@ -61,13 +61,7 @@ window.softwareApp = (function () {
     loadSoftware(newGrid);
   }
 
-  // Auto-run on normal page load
-  document.addEventListener("DOMContentLoaded", () => {
-    const page = document.querySelector(".page");
-    if (page && page.querySelector("#softwareGrid")) {
-      init(page);
-    }
-  });
-
   return { init };
 })();
+
+export { softwareApp };

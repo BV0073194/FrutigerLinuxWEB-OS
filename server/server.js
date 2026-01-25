@@ -171,7 +171,7 @@ app.get("/apps/os", (req, res) => {
 });
 
 // Download software
-app.get("/apps/software/:file", (req, res) => {
+app.get("/download/software/:file", (req, res) => {
   const file = req.params.file;
   const fullPath = path.join(SOFTWARE_DIR, file);
   res.download(fullPath);
