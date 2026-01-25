@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Frutiger Aero OS</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <script type="module" src="/software.js"></script>
+  <div class="desktop">
+    <div class="wallpaper"></div>
+    <div class="overlay"></div>
+
+    <!-- Taskbar -->
+    <div class="taskbar">
+      <div class="start-btn" id="startBtn">
+        <span class="start-icon">⊞</span>
+        <span class="start-text">Start</span>
+      </div>
+
+      <div class="taskbar-icons">
+        <button class="task-icon" data-app="os" title="Download OS">🪟</button>
+        <button class="task-icon" data-app="software" title="Software Store">⬇️</button>
+        <button class="task-icon" data-app="about" title="About">ℹ️</button>
+      </div>
+
+      <div class="taskbar-right">
+        <span class="clock" id="clock"></span>
+      </div>
+    </div>
+
+    <!-- Start Menu -->
+    <div class="start-menu" id="startMenu">
+      <div class="start-menu-header">
+        <div class="start-menu-title">Frutiger Aero</div>
+        <button class="close-start" id="closeStart">✕</button>
+      </div>
+      <div class="start-menu-grid">
+        <button class="start-tile" data-app="os">
+          <div class="tile-icon">🪟</div>
+          <div class="tile-title">Download OS</div>
+        </button>
+        <button class="start-tile" data-app="software">
+          <div class="tile-icon">⬇️</div>
+          <div class="tile-title">Software Store</div>
+        </button>
+        <button class="start-tile" data-app="about">
+          <div class="tile-icon">ℹ️</div>
+          <div class="tile-title">About</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Window container -->
+    <div class="window-container" id="windowContainer"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
