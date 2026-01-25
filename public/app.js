@@ -250,37 +250,39 @@ function updateTaskbarIndicator(app) {
 // =============================
 // LIVE PREVIEW (Windows-style)
 // =============================
-function createLivePreview(win) {
+async function createLivePreview(win) {
   const preview = document.createElement("div");
   preview.className = "stack-preview";
 
-  const clone = win.cloneNode(true);
-  clone.style.transform = "scale(0.16)";
-  clone.style.transformOrigin = "top left";
-  clone.style.pointerEvents = "none";
-  clone.style.width = win.offsetWidth + "px";
-  clone.style.height = win.offsetHeight + "px";
+  const inner = document.createElement("div");
+  inner.className = "stack-preview-inner";
 
-  preview.style.width = "240px";
-  preview.style.height = "140px";
-  preview.style.overflow = "hidden";
-  preview.style.border = "1px solid rgba(255,255,255,0.12)";
-  preview.style.borderRadius = "10px";
-  preview.style.marginTop = "8px";
+  // html2canvas only
+  const canvas = await html2canvas(win, { backgroundColor: null });
+  const img = document.createElement("img");
+  img.src = canvas.toDataURL("image/png");
+  img.className = "stack-preview-img";
+  inner.appendChild(img);
 
-  preview.appendChild(clone);
+  preview.appendChild(inner);
   return preview;
 }
+
 
 function openStackMenu(app, icon) {
   const existing = document.querySelector(".stack-menu");
   if (existing) existing.remove();
 
   const instances = appInstances[app] || [];
+  if (instances.length === 0) return; // <-- show only if at least one instance exists
+
   const menu = document.createElement("div");
   menu.className = "stack-menu";
 
-  instances.forEach((win, index) => {
+  const previewRow = document.createElement("div");
+  previewRow.className = "stack-preview-row";
+
+  instances.forEach(async (win, index) => {
     const item = document.createElement("div");
     item.className = "stack-item";
 
@@ -293,7 +295,7 @@ function openStackMenu(app, icon) {
     `;
 
     const closeBtn = item.querySelector(".stack-close");
-    const preview = createLivePreview(win);
+    const preview = await createLivePreview(win);
 
     item.appendChild(preview);
 

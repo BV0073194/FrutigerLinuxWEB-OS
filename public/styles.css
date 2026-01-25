@@ -54,6 +54,7 @@ button { font-family: inherit; }
   justify-content: space-between;
   padding: 0 12px;
   backdrop-filter: blur(12px);
+  z-index: 9999;
 }
 
 .start-btn {
@@ -445,11 +446,9 @@ button { font-family: inherit; }
   z-index: 9999;
 }
 
-
 /* =========================
    TASKBAR INDICATOR BAR
    ========================= */
-
 .taskbar-indicator {
   position: absolute;
   bottom: 6px;
@@ -501,6 +500,7 @@ button { font-family: inherit; }
   border-radius: 6px;
   box-shadow: 0 0 12px rgba(0,0,0,0.5);
   z-index: 9999;
+  width: 300px;
 }
 
 .stack-item {
@@ -508,6 +508,13 @@ button { font-family: inherit; }
   justify-content: space-between;
   padding: 6px;
   cursor: pointer;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.stack-item:last-child {
+  border-bottom: none;
 }
 
 .stack-close {
@@ -516,3 +523,44 @@ button { font-family: inherit; }
   color: #fff;
   cursor: pointer;
 }
+
+/* =========================
+   LIVE PREVIEW (NEW)
+   ========================= */
+.stack-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-title {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-thumb {
+  width: 100%;
+  height: 140px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.25);
+}
+
+.preview-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+
