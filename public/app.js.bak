@@ -5,10 +5,13 @@ const startBtn = document.getElementById("startBtn");
 const startMenu = document.getElementById("startMenu");
 const closeStart = document.getElementById("closeStart");
 const windowContainer = document.getElementById("windowContainer");
+const taskbarIcons = document.querySelector(".taskbar-icons");
 
 let zIndexCounter = 1;
 
-// APP RULES
+// ==========================
+// APP RULES (built-in apps)
+// ==========================
 const appRules = {
   software: {
     maxInstances: -1,
@@ -18,8 +21,8 @@ const appRules = {
     maximize: true,
     taskbarIcon: false
   },
-  settings: {
-    maxInstances: 1,
+  os: {
+    maxInstances: 2,
     stack: false,
     resizable: false,
     minimize: false,
@@ -38,14 +41,109 @@ const appRules = {
 
 // Track instances
 const appInstances = {};
-const taskbarIcons = {};
-const menuTimers = {};  // <-- PER-APP TIMER
+const menuTimers = {};
+
+// ==========================
+// HELPER: FETCH APPS + CONFIG
+// ==========================
+let userConfig = { installedApps: {} };
+let communityApps = [];
+
+async function loadApps() {
+  const appsRes = await fetch("/api/apps");
+  communityApps = await appsRes.json();
+
+  const configRes = await fetch("/api/user-config");
+  userConfig = await configRes.json();
+
+  // ensure config exists
+  if (!userConfig.installedApps) userConfig.installedApps = {};
+
+  // Add built-in apps
+  addLauncher("software", "Software");
+  addLauncher("os", "OS");
+  addLauncher("about", "About");
+
+  // Add community apps
+  communityApps.forEach((app) => {
+    const appId = app.id;
+    const appName = app.name || app.id;
+
+    // if not installed, ask user once
+    if (!userConfig.installedApps[appId]?.asked) {
+      askInstall(appId, appName);
+    } else {
+      // install based on saved config
+      const installed = userConfig.installedApps[appId].installed;
+      const addedTo = userConfig.installedApps[appId].addedTo;
+      if (installed) {
+        addLauncher(appId, appName, addedTo);
+      }
+    }
+  });
+
+  setupLaunchers();
+}
+
+// ==========================
+// ASK USER WHERE TO ADD APP
+// ==========================
+async function askInstall(appId, appName) {
+  const choice = prompt(
+    `Install "${appName}"?\nType: start / taskbar / both\n(leave blank to skip)`
+  );
+
+  const addedTo = (choice || "").toLowerCase();
+
+  if (!["start", "taskbar", "both"].includes(addedTo)) {
+    userConfig.installedApps[appId] = { installed: false, asked: true };
+    return;
+  }
+
+  userConfig.installedApps[appId] = {
+    installed: true,
+    asked: true,
+    addedTo
+  };
+
+  await fetch("/api/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appId, addedTo })
+  });
+
+  addLauncher(appId, appName, addedTo);
+}
+
+// ==========================
+// CREATE LAUNCHERS
+// ==========================
+function addLauncher(appId, label, addedTo = "start") {
+  // Start menu launcher
+  if (addedTo === "start" || addedTo === "both") {
+    const btn = document.createElement("button");
+    btn.className = "start-app-btn";
+    btn.dataset.app = appId;
+    btn.textContent = label;
+    startMenu.appendChild(btn);
+  }
+
+  // Taskbar launcher
+  if (addedTo === "taskbar" || addedTo === "both") {
+    const icon = document.createElement("button");
+    icon.className = "task-icon";
+    icon.dataset.app = appId;
+    icon.textContent = label[0].toUpperCase();
+    taskbarIcons.appendChild(icon);
+  }
+}
 
 // ==========================
 // START MENU TOGGLE
 // ==========================
 function toggleStart() {
-  startMenu.style.display = startMenu.style.display === "block" ? "none" : "block";
+  startMenu.style.display =
+    startMenu.style.display === "block" ? "none" : "block";
 }
 
 startBtn.addEventListener("click", toggleStart);
@@ -58,7 +156,7 @@ document.addEventListener("click", (e) => {
 });
 
 // ==========================
-// OPEN APP
+// APP WINDOW MANAGEMENT
 // ==========================
 function openApp(app) {
   const rules = appRules[app] || {
@@ -73,10 +171,8 @@ function openApp(app) {
   appInstances[app] = appInstances[app] || [];
   const instances = appInstances[app];
 
-  // enforce max instances (unless -1)
   if (rules.maxInstances !== -1 && instances.length >= rules.maxInstances) {
-    const winToFocus = instances[0];
-    focusWindow(winToFocus);
+    focusWindow(instances[0]);
     return;
   }
 
@@ -109,25 +205,20 @@ function openApp(app) {
   windowContainer.appendChild(win);
   instances.push(win);
 
-  // bring to front
   win.addEventListener("mousedown", () => {
     win.style.zIndex = ++zIndexCounter;
   });
 
-  // load app content into window body
   fetch(`/${app}.html`)
     .then((r) => r.text())
     .then((html) => {
       win.querySelector(".window-body").innerHTML = html;
-      if (app === "software") {
-        window.softwareApp?.init?.(win.querySelector(".window-body"));
-      }
     })
     .catch(() => {
       win.querySelector(".window-body").innerHTML = `<div class="aero-card"><p>Failed to load app.</p></div>`;
     });
 
-  // window controls
+  // Controls
   win.querySelector("[data-action='close']").addEventListener("click", () => {
     closeWindow(win);
   });
@@ -153,27 +244,8 @@ function openApp(app) {
   }
 
   makeDraggable(win);
-
-  // Use launcher as taskbar icon
-  const launcher = document.querySelector(`[data-app="${app}"]`);
-  if (launcher && rules.stack) {
-    if (!launcher.querySelector(".taskbar-indicator")) {
-      const bar = document.createElement("div");
-      bar.className = "taskbar-indicator";
-      launcher.appendChild(bar);
-    }
-  }
-
-  if (rules.taskbarIcon && !taskbarIcons[app]) {
-    createTaskbarIcon(app, rules.stack);
-  }
-
-  updateTaskbarIndicator(app);
 }
 
-// ==========================
-// FOCUS / MINIMIZE / CLOSE
-// ==========================
 function focusWindow(win) {
   win.dataset.minimized = "false";
   win.style.display = "block";
@@ -184,148 +256,13 @@ function closeWindow(win) {
   const app = win.dataset.app;
   appInstances[app] = appInstances[app].filter((w) => w !== win);
   win.remove();
-  updateTaskbarIndicator(app);
 }
 
 function minimizeWindow(win) {
   win.dataset.minimized = "true";
   win.style.display = "none";
-  updateTaskbarIndicator(win.dataset.app);
 }
 
-// ==========================
-// TASKBAR ICONS (ONLY IF taskbarIcon = true)
-// ==========================
-function createTaskbarIcon(app, stackable) {
-  const icon = document.createElement("button");
-  icon.className = "task-icon";
-  icon.dataset.app = app;
-  icon.textContent = app[0].toUpperCase();
-
-  // add indicator bar
-  const bar = document.createElement("div");
-  bar.className = "taskbar-indicator";
-  icon.appendChild(bar);
-
-  document.querySelector(".taskbar-icons").appendChild(icon);
-  taskbarIcons[app] = icon;
-
-  // click behavior
-  icon.addEventListener("click", () => {
-    const instances = appInstances[app] || [];
-    const visible = instances.find((w) => w.style.display !== "none");
-    if (visible) {
-      focusWindow(visible);
-    } else if (instances.length > 0) {
-      focusWindow(instances[0]);
-    } else {
-      openApp(app);
-    }
-  });
-}
-
-// ==========================
-// TASKBAR INDICATOR
-// ==========================
-function updateTaskbarIndicator(app) {
-  const rules = appRules[app] || {};
-  const launcher = document.querySelector(`[data-app="${app}"]`);
-  const icon = taskbarIcons[app];
-
-  const instances = appInstances[app] || [];
-  const totalCount = instances.length;
-
-  const show = totalCount > 0;
-
-  // Update launcher indicator
-  if (launcher && rules.stack) {
-    const bar = launcher.querySelector(".taskbar-indicator");
-    if (bar) bar.style.display = show ? "block" : "none";
-  }
-
-  // Update taskbar icon indicator
-  if (icon) {
-    const bar = icon.querySelector(".taskbar-indicator");
-    if (bar) bar.style.display = show ? "block" : "none";
-  }
-}
-
-// ==========================
-// STACK MENU (LAUNCHER ONLY)
-// ==========================
-function attachLauncherHover(app) {
-  const launcher = document.querySelector(`[data-app="${app}"]`);
-  if (!launcher) return;
-
-  launcher.addEventListener("mouseenter", () => {
-    clearTimeout(menuTimers[app]);
-    const rules = appRules[app] || {};
-    if (rules.stack) openStackMenu(app, launcher);
-  });
-
-  launcher.addEventListener("mouseleave", () => {
-    menuTimers[app] = setTimeout(() => {
-      const menu = document.querySelector(".stack-menu");
-      if (menu && !menu.matches(":hover")) {
-        menu.remove();
-      }
-    }, 200);
-  });
-}
-
-function openStackMenu(app, launcher) {
-  const existing = document.querySelector(".stack-menu");
-  if (existing) existing.remove();
-
-  const instances = appInstances[app] || [];
-  const menu = document.createElement("div");
-  menu.className = "stack-menu";
-
-  instances.forEach((win, index) => {
-    const item = document.createElement("div");
-    item.className = "stack-item";
-    item.textContent = `${app.toUpperCase()} (${index + 1})`;
-
-    item.addEventListener("click", () => {
-      focusWindow(win);
-      menu.remove();
-    });
-
-    const closeBtn = document.createElement("button");
-    closeBtn.textContent = "✕";
-    closeBtn.className = "stack-close";
-
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeWindow(win);
-      menu.remove();
-    });
-
-    item.appendChild(closeBtn);
-    menu.appendChild(item);
-  });
-
-  document.body.appendChild(menu);
-
-  const rect = launcher.getBoundingClientRect();
-  menu.style.top = `${rect.top - menu.offsetHeight - 10}px`;
-  menu.style.left = `${rect.left}px`;
-
-  // keep menu alive while hovering it
-  menu.addEventListener("mouseenter", () => {
-    clearTimeout(menuTimers[app]);
-  });
-
-  menu.addEventListener("mouseleave", () => {
-    menuTimers[app] = setTimeout(() => {
-      menu.remove();
-    }, 200);
-  });
-}
-
-// ==========================
-// MAXIMIZE
-// ==========================
 function maximizeWindow(win) {
   if (win.classList.contains("maximized")) {
     win.classList.remove("maximized");
@@ -343,7 +280,7 @@ function maximizeWindow(win) {
 }
 
 // ==========================
-// DRAGGABLE + RESIZABLE
+// Drag & Resize
 // ==========================
 function makeDraggable(win) {
   const header = win.querySelector(".window-header");
@@ -406,29 +343,33 @@ setInterval(() => {
 }, 1000);
 
 // ==========================
-// DOUBLE CLICK LAUNCHER SETUP
+// DOUBLE CLICK LAUNCHERS
 // ==========================
-document.querySelectorAll("[data-app]").forEach((btn) => {
-  let clickCount = 0;
-  let timer = null;
+function setupLaunchers() {
+  document.querySelectorAll("[data-app]").forEach((btn) => {
+    let clickCount = 0;
+    let timer = null;
 
-  btn.addEventListener("click", () => {
-    clickCount++;
+    btn.addEventListener("click", () => {
+      clickCount++;
 
-    if (clickCount === 1) {
-      timer = setTimeout(() => {
+      if (clickCount === 1) {
+        timer = setTimeout(() => {
+          clickCount = 0;
+        }, 250);
+      }
+
+      if (clickCount === 2) {
+        clearTimeout(timer);
         clickCount = 0;
-      }, 250);
-    }
-
-    if (clickCount === 2) {
-      clearTimeout(timer);
-      clickCount = 0;
-      openApp(btn.dataset.app);
-      startMenu.style.display = "none";
-    }
+        openApp(btn.dataset.app);
+        startMenu.style.display = "none";
+      }
+    });
   });
+}
 
-  // THIS IS THE FIX:
-  attachLauncherHover(btn.dataset.app);
-});
+// ==========================
+// INITIALIZE
+// ==========================
+loadApps();

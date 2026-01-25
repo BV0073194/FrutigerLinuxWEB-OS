@@ -81,13 +81,23 @@ app.get("/api/apps", (req, res) => {
 
   const apps = folders.map((folder) => {
     const propsPath = path.join(APPS_DIR, folder, `${folder}.properties`);
+
     const props = fs.existsSync(propsPath)
       ? JSON.parse(fs.readFileSync(propsPath, "utf8"))
-      : { name: folder };
+      : {};
 
     return {
-      id: folder,
-      ...props,
+      name: folder,
+      rules: props.rules || {
+        maxInstances: 1,
+        stack: false,
+        resizable: true,
+        minimize: true,
+        maximize: true,
+        taskbarIcon: false
+      },
+      icon: props.icon || "⬇️",
+      title: props.title || folder
     };
   });
 
@@ -134,19 +144,16 @@ app.post("/api/update", (req, res) => {
   res.json({ success: true });
 });
 
-// NEW: Serve apps static files
-app.get("/apps/:appname/:file", (req, res) => {
-  const filePath = path.join(APPS_DIR, req.params.appname, req.params.file);
-  res.sendFile(filePath);
-});
+// NEW: Serve apps static files (CORRECTED)
+app.use("/apps", express.static(APPS_DIR));
 
 // Download OS
-app.get("/download/os", (req, res) => {
+app.get("/os", (req, res) => {
   res.download(OS_FILE);
 });
 
 // Download software
-app.get("/download/software/:file", (req, res) => {
+app.get("/software/:file", (req, res) => {
   const file = req.params.file;
   const fullPath = path.join(SOFTWARE_DIR, file);
   res.download(fullPath);
