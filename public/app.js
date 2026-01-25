@@ -51,7 +51,6 @@ document.addEventListener("click", (e) => {
 
 // Track instances
 const appInstances = {};
-const taskbarIcons = {};
 const menuTimers = {};  // <-- PER-APP TIMER
 
 function openApp(app) {
@@ -148,16 +147,8 @@ function openApp(app) {
 
   makeDraggable(win);
 
-  // ----------------------------
-  // TASKBAR ICON BEHAVIOR
-  // ----------------------------
-  const launcher = document.querySelector(`[data-app="${app}"]`);
-
-  if (rules.taskbarIcon) {
-    createTaskbarIcon(win, app);
-  }
-
   // Use launcher as indicator ONLY if stackable
+  const launcher = document.querySelector(`[data-app="${app}"]`);
   if (launcher && rules.stack) {
     if (!launcher.querySelector(".taskbar-indicator")) {
       const bar = document.createElement("div");
@@ -178,13 +169,6 @@ function focusWindow(win) {
 function closeWindow(win) {
   const app = win.dataset.app;
   appInstances[app] = appInstances[app].filter((w) => w !== win);
-
-  // remove taskbar icon if it exists
-  if (win.dataset.taskbarIconId) {
-    const icon = document.getElementById(win.dataset.taskbarIconId);
-    if (icon) icon.remove();
-  }
-
   win.remove();
   updateTaskbarIndicator(app);
 }
@@ -195,52 +179,13 @@ function minimizeWindow(win) {
   updateTaskbarIndicator(win.dataset.app);
 }
 
-function createTaskbarIcon(win, app) {
-  const icon = document.createElement("button");
-  const id = `taskbar-icon-${app}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  icon.id = id;
-  icon.className = "task-icon";
-  icon.dataset.app = app;
-
-  // clone launcher icon (if exists)
-  const launcher = document.querySelector(`[data-app="${app}"]`);
-  if (launcher && launcher.querySelector(".launcher-icon")) {
-    icon.innerHTML = launcher.querySelector(".launcher-icon").outerHTML;
-  } else {
-    icon.textContent = app[0].toUpperCase();
-  }
-
-  // attach icon id to window
-  win.dataset.taskbarIconId = id;
-
-  // add indicator bar
-  const bar = document.createElement("div");
-  bar.className = "taskbar-indicator";
-  icon.appendChild(bar);
-
-  document.querySelector(".taskbar-icons").appendChild(icon);
-
-  // click behavior
-  icon.addEventListener("click", () => {
-    const instances = appInstances[app] || [];
-    const visible = instances.find((w) => w.style.display !== "none");
-    if (visible) {
-      focusWindow(visible);
-    } else if (instances.length > 0) {
-      focusWindow(instances[0]);
-    }
-  });
-}
-
 function updateTaskbarIndicator(app) {
   const rules = appRules[app] || {};
   const launcher = document.querySelector(`[data-app="${app}"]`);
 
   const instances = appInstances[app] || [];
-  const totalCount = instances.length;
-  const show = totalCount > 0;
+  const show = instances.length > 0;
 
-  // Update launcher indicator
   if (launcher && rules.stack) {
     const bar = launcher.querySelector(".taskbar-indicator");
     if (bar) bar.style.display = show ? "block" : "none";
@@ -257,7 +202,6 @@ async function createLivePreview(win) {
   const inner = document.createElement("div");
   inner.className = "stack-preview-inner";
 
-  // html2canvas only
   const canvas = await html2canvas(win, { backgroundColor: null });
   const img = document.createElement("img");
   img.src = canvas.toDataURL("image/png");
@@ -268,34 +212,35 @@ async function createLivePreview(win) {
   return preview;
 }
 
-
-function openStackMenu(app, icon) {
+async function openStackMenu(app, icon) {
   const existing = document.querySelector(".stack-menu");
   if (existing) existing.remove();
 
   const instances = appInstances[app] || [];
-  if (instances.length === 0) return; // <-- show only if at least one instance exists
+  if (instances.length === 0) return; // Only show if at least 1 instance
 
   const menu = document.createElement("div");
   menu.className = "stack-menu";
 
-  const previewRow = document.createElement("div");
-  previewRow.className = "stack-preview-row";
+  const row = document.createElement("div");
+  row.className = "stack-items-row";
+  menu.appendChild(row);
 
-  instances.forEach(async (win, index) => {
+  for (let i = 0; i < instances.length; i++) {
+    const win = instances[i];
     const item = document.createElement("div");
     item.className = "stack-item";
 
     item.innerHTML = `
       <div class="stack-left">
         <span class="stack-icon">⬇️</span>
-        <span class="stack-title">${app.toUpperCase()} (${index + 1})</span>
+        <span class="stack-title">${app.toUpperCase()} (${i + 1})</span>
       </div>
       <button class="stack-close">✕</button>
     `;
 
     const closeBtn = item.querySelector(".stack-close");
-    const preview = await createLivePreview(win);
+    const preview = await createLivePreview(win); // ✅ NOW AWAITED
 
     item.appendChild(preview);
 
@@ -310,14 +255,39 @@ function openStackMenu(app, icon) {
       menu.remove();
     });
 
-    menu.appendChild(item);
-  });
+    row.appendChild(item);
+  }
 
   document.body.appendChild(menu);
 
-  const rect = icon.getBoundingClientRect();
-  menu.style.top = `${rect.top - menu.offsetHeight - 10}px`;
-  menu.style.left = `${rect.left}px`;
+  // Wait for layout to finish, then position
+  requestAnimationFrame(() => {
+    const rect = icon.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const taskbarHeight = 54;
+
+    let top = rect.top - menuRect.height - 10;
+    let left = rect.left;
+
+    // if menu goes above screen, drop it below icon
+    if (top < 0) {
+      top = rect.bottom + 10;
+    }
+
+    // clamp left/right to viewport
+    const maxLeft = window.innerWidth - menuRect.width - 10;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 10) left = 10;
+
+    // prevent overlapping taskbar
+    const bottom = top + menuRect.height;
+    if (bottom > window.innerHeight - taskbarHeight) {
+      top = window.innerHeight - taskbarHeight - menuRect.height - 10;
+    }
+
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+  });
 
   // keep menu alive while hovering it
   menu.addEventListener("mouseenter", () => {
