@@ -347,6 +347,7 @@ function minimizeWindow(win) {
     win.storedPreview = canvas.toDataURL("image/png");
   });
   win.dataset.minimized = "true";
+  win.minimizedAt = Date.now(); // track minimization time
   win.style.display = "none";
   updateTaskbarIndicator(win.dataset.appKey);
 }
@@ -681,6 +682,21 @@ document.querySelectorAll("[data-app]").forEach((btn) => {
     if (clickCount === 1) {
       timer = setTimeout(() => {
         clickCount = 0;
+        // Single click: open most recent minimized window
+        const appKey = btn.dataset.app;
+        const instances = appInstances[appKey] || [];
+        const minimizedInstances = instances.filter(win => win.dataset.minimized === "true");
+        if (minimizedInstances.length > 0) {
+          // Sort by minimization time, most recent first
+          minimizedInstances.sort((a, b) => b.minimizedAt - a.minimizedAt);
+          focusWindow(minimizedInstances[0]);
+        } else {
+          // If no minimized, show stack menu if applicable
+          const rules = appRules[appKey] || {};
+          if (rules.stack && instances.length > 0) {
+            openStackMenu(appKey, btn);
+          }
+        }
       }, 250);
     }
 
