@@ -277,6 +277,14 @@ function focusWindow(win) {
   win.dataset.minimized = "false";
   win.style.display = "block";
   win.style.zIndex = ++zIndexCounter;
+  // If it was temp unminimized, reset the styles
+  if (win.isTempUnminimized) {
+    win.style.opacity = "";
+    win.style.pointerEvents = "";
+    win.style.border = "";
+    win.style.boxShadow = "";
+    delete win.isTempUnminimized;
+  }
 }
 
 function closeWindow(win) {
@@ -329,6 +337,9 @@ async function createLivePreview(win) {
   let imgSrc;
   if (win.dataset.minimized === "true" && win.storedPreview) {
     imgSrc = win.storedPreview;
+  } else if (win.style.display === "none" && win.storedPreview) {
+    // If window is hidden but not minimized, use stored preview
+    imgSrc = win.storedPreview;
   } else {
     const canvas = await html2canvas(win, { backgroundColor: null });
     imgSrc = canvas.toDataURL("image/png");
@@ -344,9 +355,43 @@ async function createLivePreview(win) {
   return preview;
 }
 
+// Phantom window functions (temporarily unminimize)
+function showTempUnminimized(win) {
+  if (win.dataset.minimized !== "true") return; // don't show if already unminimized
+  hideAllTempUnminimized(); // ensure only one at a time
+  win.style.display = "block";
+  win.style.opacity = "0.8";
+  win.style.pointerEvents = "none";
+  win.style.zIndex = "9999";
+  win.style.border = "2px solid #0078d4";
+  win.style.boxShadow = "0 0 20px rgba(0,120,212,0.5)";
+  win.isTempUnminimized = true;
+}
+
+function hideTempUnminimized(win) {
+  if (win.isTempUnminimized) {
+    win.style.display = "none";
+    win.style.opacity = "";
+    win.style.pointerEvents = "";
+    win.style.zIndex = "";
+    win.style.border = "";
+    win.style.boxShadow = "";
+    delete win.isTempUnminimized;
+  }
+}
+
+function hideAllTempUnminimized() {
+  document.querySelectorAll('.window').forEach(win => {
+    if (win.isTempUnminimized) {
+      hideTempUnminimized(win);
+    }
+  });
+}
+
 async function openStackMenu(app, icon) {
   // remove any other app's stack menu
   document.querySelectorAll(".stack-menu").forEach(m => m.remove());
+  hideAllTempUnminimized(); // hide any temp unminimized
 
   const instances = appInstances[app] || [];
   if (instances.length === 0) return;
@@ -380,12 +425,25 @@ async function openStackMenu(app, icon) {
     item.addEventListener("click", () => {
       focusWindow(win);
       menu.remove();
+      hideAllTempUnminimized();
     });
 
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       closeWindow(win);
       menu.remove();
+      hideAllTempUnminimized();
+    });
+
+    // Add temp unminimize hover
+    item.addEventListener("mouseenter", () => {
+      if (item.hoverTimeout) clearTimeout(item.hoverTimeout);
+      item.hoverTimeout = setTimeout(() => showTempUnminimized(win), 500);
+    });
+
+    item.addEventListener("mouseleave", () => {
+      if (item.hoverTimeout) clearTimeout(item.hoverTimeout);
+      hideTempUnminimized(win);
     });
 
     row.appendChild(item);
@@ -416,6 +474,7 @@ async function openStackMenu(app, icon) {
 
     menu.style.top = `${top}px`;
     menu.style.left = `${left}px`;
+    menu.style.zIndex = "10000"; // ensure menu is above temp unminimized windows
   });
 
   menu.addEventListener("mouseenter", () => {
@@ -425,6 +484,7 @@ async function openStackMenu(app, icon) {
   menu.addEventListener("mouseleave", () => {
     menuTimers[app] = setTimeout(() => {
       menu.remove();
+      hideAllTempUnminimized();
     }, 200);
   });
 }
