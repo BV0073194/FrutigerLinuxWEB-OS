@@ -1,0 +1,28 @@
+{
+  "windows": [
+    {
+      "appKey": "software",
+      "top": "70px",
+      "left": "70px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 2,
+      "preview": null
+    },
+    {
+      "appKey": "software",
+      "top": "141px",
+      "left": "618px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 30,
+      "preview": null
+    }
+  ],
+  "zIndexCounter": 30,
+  "timestamp": 1769395268427
+}

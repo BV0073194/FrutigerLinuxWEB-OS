@@ -12,6 +12,131 @@ const taskbarIcons = document.querySelector(".taskbar-icons");
 let zIndexCounter = 1;
 var loadedModules = {};
 
+// Encryption key (in production, this should be securely managed)
+const ENCRYPTION_KEY = 'FrutigerAeroOS-SessionKey-2026'; // Simple key for demo
+
+async function encryptData(data) {
+  const encoder = new TextEncoder();
+  const dataBuffer = encoder.encode(JSON.stringify(data));
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(ENCRYPTION_KEY),
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt']
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    dataBuffer
+  );
+  return {
+    encrypted: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+    iv: btoa(String.fromCharCode(...iv))
+  };
+}
+
+async function decryptData(encryptedData) {
+  const decoder = new TextDecoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    decoder.encode(ENCRYPTION_KEY),
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+  const iv = new Uint8Array(atob(encryptedData.iv).split('').map(c => c.charCodeAt(0)));
+  const encrypted = new Uint8Array(atob(encryptedData.encrypted).split('').map(c => c.charCodeAt(0)));
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    encrypted
+  );
+  return JSON.parse(decoder.decode(decrypted));
+}
+
+async function saveDesktopState() {
+  const windows = [];
+  for (const win of document.querySelectorAll('.window')) {
+    const appKey = win.dataset.appKey;
+    const rules = appRules[appKey] || {};
+    const rect = win.getBoundingClientRect();
+    const minimized = win.dataset.minimized === 'true';
+    const maximized = win.classList.contains('maximized');
+    const zIndex = parseInt(win.style.zIndex) || 1;
+    const preview = minimized ? win.storedPreview : null;
+    let sessionData = null;
+    if (rules.retainSession && typeof window.getSessionData === 'function') {
+      try {
+        const data = window.getSessionData(win);
+        if (rules.dataSecurity) {
+          sessionData = await encryptData(data);
+        } else {
+          sessionData = data;
+        }
+      } catch (err) {
+        console.warn('Failed to get session data for', appKey, err);
+      }
+    }
+    windows.push({
+      appKey,
+      top: win.style.top,
+      left: win.style.left,
+      width: win.style.width,
+      height: win.style.height,
+      minimized,
+      maximized,
+      zIndex,
+      preview,
+      sessionData
+    });
+  }
+  try {
+    await fetch('/api/save-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ windows, zIndexCounter })
+    });
+  } catch (err) {
+    console.warn('Failed to save state:', err);
+  }
+}
+
+async function loadDesktopState() {
+  try {
+    const res = await fetch('/api/load-state');
+    const state = await res.json();
+    zIndexCounter = state.zIndexCounter || 1;
+    for (const winState of state.windows) {
+      await openApp(winState.appKey);
+      // Get the last opened window for this app
+      const instances = appInstances[winState.appKey];
+      if (instances && instances.length > 0) {
+        const win = instances[instances.length - 1];
+        win.style.top = winState.top;
+        win.style.left = winState.left;
+        win.style.width = winState.width;
+        win.style.height = winState.height;
+        win.dataset.minimized = winState.minimized ? 'true' : 'false';
+        win.style.zIndex = winState.zIndex;
+        if (winState.minimized) {
+          win.style.display = 'none';
+          if (winState.preview) {
+            win.storedPreview = winState.preview;
+          }
+        }
+        if (winState.maximized) {
+          win.classList.add('maximized');
+        }
+        updateTaskbarIndicator(winState.appKey);
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load state:', err);
+  }
+}
+
 
 async function captureWindowPreview(windowEl) {
   const canvas = document.getElementById("previewCanvas");
@@ -109,7 +234,15 @@ async function loadCommunityApps() {
 }
 
 // run loader
-loadCommunityApps();
+loadCommunityApps().then(() => {
+  loadDesktopState();
+});
+
+// Periodic save every 30 seconds
+setInterval(saveDesktopState, 30000);
+
+// Save on unload
+window.addEventListener('beforeunload', saveDesktopState);
 
 // ==========================
 // START MENU

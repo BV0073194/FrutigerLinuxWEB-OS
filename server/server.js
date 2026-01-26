@@ -129,19 +129,26 @@ app.post("/api/install", (req, res) => {
 });
 
 // -----------------------------
-// NEW: API - update install location
+// NEW: API - save desktop state
 // -----------------------------
-app.post("/api/update", (req, res) => {
-  const { appId, addedTo } = req.body;
-  const config = readUserConfig();
+const STATE_FILE = path.join(__dirname, "desktopState.json");
 
-  if (!config.installedApps[appId]) {
-    return res.status(400).json({ error: "App not installed" });
-  }
-
-  config.installedApps[appId].addedTo = addedTo;
-  saveUserConfig(config);
+app.post("/api/save-state", (req, res) => {
+  const { windows, zIndexCounter } = req.body;
+  const state = { windows, zIndexCounter, timestamp: Date.now() };
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   res.json({ success: true });
+});
+
+// -----------------------------
+// NEW: API - load desktop state
+// -----------------------------
+app.get("/api/load-state", (req, res) => {
+  if (!fs.existsSync(STATE_FILE)) {
+    return res.json({ windows: [], zIndexCounter: 1 });
+  }
+  const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  res.json(state);
 });
 
 // -----------------------------
