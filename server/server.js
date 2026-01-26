@@ -1,3 +1,4 @@
+const puppeteer = require("puppeteer");
 const openModule = require("open");
 const open = openModule.default || openModule;
 const { exec } = require("child_process");
@@ -193,7 +194,38 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
 
-app.listen(PORT, async() => {
+async function launchHeadlessBrowser(url) {
+  try {
+    const browser = await puppeteer.launch({
+      headless: "new", // modern headless
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage"
+      ]
+    });
+
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle2" });
+
+    console.log("🧠 Headless browser loaded:", url);
+
+    // Optional: keep references if you want later control
+    global.__browser = browser;
+    global.__page = page;
+
+  } catch (err) {
+    console.error("Failed to launch Puppeteer:", err);
+  }
+}
+
+app.listen(PORT, async () => {
   fs.writeFileSync(STATE_FILE, JSON.stringify({}, null, 2));
+
   const url = `http://localhost:${PORT}`;
+  console.log(`🚀 Server running at ${url}`);
+
+  // Launch headless Chromium
+  await launchHeadlessBrowser(url);
 });
