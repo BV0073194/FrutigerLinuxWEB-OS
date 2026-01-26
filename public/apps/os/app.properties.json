@@ -1,5 +1,5 @@
 {
-    "maxInstances": 1,
+    "maxInstances": 2,
     "stack": false,
     "resizable": true,
     "minimize": true,

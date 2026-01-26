@@ -5,6 +5,12 @@ const startBtn = document.getElementById("startBtn");
 const startMenu = document.getElementById("startMenu");
 const closeStart = document.getElementById("closeStart");
 const windowContainer = document.getElementById("windowContainer");
+const clock = document.getElementById("clock");
+
+const taskbarIcons = document.createElement("div");
+taskbarIcons.id = "taskbarIcons";
+taskbarIcons.style.cssText = "display: flex; align-items: center; gap: 5px; margin-left: 10px;";
+clock.parentNode.insertBefore(taskbarIcons, clock);
 
 let zIndexCounter = 1;
 var loadedModules = {};
@@ -245,6 +251,20 @@ async function openApp(appKey) {
   console.log("Launcher found:", launcher);
   console.log("Stack rule:", rules.stack);  
   console.log("Taskbar Icon rule:", rules.taskbarIcon);
+
+  // For non-stacking apps, create individual taskbar icon
+  if (!rules.stack) {
+    const icon = document.createElement("button");
+    icon.className = "taskbar-icon";
+    icon.innerHTML = launcher ? launcher.innerHTML : "⬇️";
+    icon.win = win;
+    icon.addEventListener("click", () => {
+      focusWindow(icon.win);
+    });
+    taskbarIcons.appendChild(icon);
+    win.taskbarIcon = icon;
+  }
+
   if (launcher && rules.stack) {
     if (!launcher.querySelector(".taskbar-indicator")) {
       const bar = document.createElement("div");
@@ -265,6 +285,9 @@ function focusWindow(win) {
 function closeWindow(win) {
   const appKey = win.dataset.appKey;
   appInstances[appKey] = appInstances[appKey].filter((w) => w !== win);
+  if (win.taskbarIcon) {
+    win.taskbarIcon.remove();
+  }
   win.remove();
   updateTaskbarIndicator(appKey);
   const appPath = win.dataset.app;
