@@ -7,10 +7,7 @@ const closeStart = document.getElementById("closeStart");
 const windowContainer = document.getElementById("windowContainer");
 const clock = document.getElementById("clock");
 
-const taskbarIcons = document.createElement("div");
-taskbarIcons.id = "taskbarIcons";
-taskbarIcons.style.cssText = "display: flex; align-items: center; gap: 5px; margin-left: 10px;";
-clock.parentNode.insertBefore(taskbarIcons, clock);
+const taskbarIcons = document.querySelector(".taskbar-icons");
 
 let zIndexCounter = 1;
 var loadedModules = {};
@@ -255,8 +252,8 @@ async function openApp(appKey) {
   // For non-stacking apps, create individual taskbar icon
   if (!rules.stack) {
     const icon = document.createElement("button");
-    icon.className = "taskbar-icon";
-    icon.innerHTML = launcher ? launcher.innerHTML : "⬇️";
+    icon.className = launcher.className;
+    icon.innerHTML = launcher.innerHTML;
     icon.win = win;
     icon.addEventListener("click", () => {
       focusWindow(icon.win);
