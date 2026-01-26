@@ -1,28 +1,5 @@
 {
-  "windows": [
-    {
-      "appKey": "software",
-      "top": "70px",
-      "left": "70px",
-      "width": "",
-      "height": "",
-      "minimized": false,
-      "maximized": false,
-      "zIndex": 157,
-      "preview": null
-    },
-    {
-      "appKey": "software",
-      "top": "205px",
-      "left": "809px",
-      "width": "",
-      "height": "",
-      "minimized": false,
-      "maximized": false,
-      "zIndex": 159,
-      "preview": null
-    }
-  ],
-  "zIndexCounter": 161,
-  "timestamp": 1769396562122
+  "windows": [],
+  "zIndexCounter": 1,
+  "timestamp": 1769398997066
 }
