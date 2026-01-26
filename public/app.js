@@ -162,7 +162,6 @@ async function openApp(appKey) {
     <div class="window-body">
       <div class="loading">Loading...</div>
     </div>
-    <div class="resize-handle"></div>
   `;
 
   windowContainer.appendChild(win);
@@ -235,8 +234,6 @@ async function openApp(appKey) {
 
   if (rules.resizable) {
     makeResizable(win);
-  } else {
-    win.querySelector(".resize-handle").style.display = "none";
   }
 
   makeDraggable(win);
@@ -531,27 +528,93 @@ function makeDraggable(win) {
 }
 
 function makeResizable(win) {
-  const handle = win.querySelector(".resize-handle");
   let resizing = false;
-  let startX, startY, startWidth, startHeight;
+  let resizeMode = '';
+  let startX, startY, startWidth, startHeight, startLeft, startTop;
 
-  handle.addEventListener("mousedown", (e) => {
-    resizing = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startWidth = win.offsetWidth;
-    startHeight = win.offsetHeight;
-    e.preventDefault();
+  const threshold = 10; // pixels from edge to trigger resize
+
+  function getResizeMode(e) {
+    const rect = win.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const w = rect.width;
+    const h = rect.height;
+
+    let mode = '';
+
+    if (y < threshold) mode += 'n';
+    else if (y > h - threshold) mode += 's';
+
+    if (x < threshold) mode += 'w';
+    else if (x > w - threshold) mode += 'e';
+
+    return mode;
+  }
+
+  win.addEventListener("mousemove", (e) => {
+    if (resizing) return;
+    const mode = getResizeMode(e);
+    if (mode) {
+      const cursors = {
+        'n': 'n-resize',
+        's': 's-resize',
+        'e': 'e-resize',
+        'w': 'w-resize',
+        'ne': 'ne-resize',
+        'nw': 'nw-resize',
+        'se': 'se-resize',
+        'sw': 'sw-resize'
+      };
+      win.style.cursor = cursors[mode] || 'default';
+    } else {
+      win.style.cursor = 'default';
+    }
+  });
+
+  win.addEventListener("mousedown", (e) => {
+    const mode = getResizeMode(e);
+    if (mode) {
+      resizing = true;
+      resizeMode = mode;
+      startX = e.clientX;
+      startY = e.clientY;
+      startWidth = win.offsetWidth;
+      startHeight = win.offsetHeight;
+      startLeft = win.offsetLeft;
+      startTop = win.offsetTop;
+      e.preventDefault();
+    }
   });
 
   document.addEventListener("mousemove", (e) => {
     if (!resizing) return;
-    win.style.width = `${startWidth + (e.clientX - startX)}px`;
-    win.style.height = `${startHeight + (e.clientY - startY)}px`;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    if (resizeMode.includes('e')) {
+      const newWidth = Math.max(200, startWidth + dx);
+      win.style.width = `${newWidth}px`;
+    }
+    if (resizeMode.includes('s')) {
+      const newHeight = Math.max(100, startHeight + dy);
+      win.style.height = `${newHeight}px`;
+    }
+    if (resizeMode.includes('w')) {
+      const newWidth = Math.max(200, startWidth - dx);
+      win.style.width = `${newWidth}px`;
+      win.style.left = `${startLeft + dx}px`;
+    }
+    if (resizeMode.includes('n')) {
+      const newHeight = Math.max(100, startHeight - dy);
+      win.style.height = `${newHeight}px`;
+      win.style.top = `${startTop + dy}px`;
+    }
   });
 
   document.addEventListener("mouseup", () => {
     resizing = false;
+    resizeMode = '';
   });
 }
 

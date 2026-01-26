@@ -1,8 +1,8 @@
 {
     "maxInstances": 2,
     "stack": false,
-    "resizable": true,
+    "resizable": false,
     "minimize": true,
-    "maximize": true,
+    "maximize": false,
     "taskbarIcon": false
 }
