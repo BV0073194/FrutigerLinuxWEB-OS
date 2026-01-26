@@ -9,6 +9,34 @@ const windowContainer = document.getElementById("windowContainer");
 let zIndexCounter = 1;
 var loadedModules = {};
 
+
+async function captureWindowPreview(windowEl) {
+  const canvas = document.getElementById("previewCanvas");
+  const ctx = canvas.getContext("2d");
+
+  const rendered = await html2canvas(windowEl, { backgroundColor: null });
+
+  canvas.width = rendered.width;
+  canvas.height = rendered.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(rendered, 0, 0);
+
+  return canvas.toDataURL("image/png");
+}
+
+function toggleStart() {
+  startMenu.style.display = startMenu.style.display === "block" ? "none" : "block";
+}
+
+startBtn.addEventListener("click", toggleStart);
+closeStart.addEventListener("click", () => (startMenu.style.display = "none"));
+
+document.addEventListener("click", (e) => {
+  if (!startMenu.contains(e.target) && !startBtn.contains(e.target)) {
+    startMenu.style.display = "none";
+  }
+});
+
 // helper: convert "/apps/software" => "software"
 function getAppKey(app) {
   return app.replace("/apps/", "");
@@ -61,21 +89,24 @@ const appInstances = {};
 const menuTimers = {}; // <-- PER-APP TIMER
 let activeStackApp = null; // prevents hover flicker
 
-async function getAppRules(app) {
-  if (appRules[app]) {
-    console.log("App rules found:", appRules[app]);
-    return appRules[app];
-  } else {
-    console.log("Fetching app rules from:", `${app}`);
-    try {
-      const res = await fetch(`${app}`);
-      if (!res.ok) throw new Error('Network response was not ok');
-      const rules = await res.json();
-      console.log("Fetched app rules:", rules);
-      return rules;
-    } catch (error) {
-      console.error("Failed to fetch app rules:", error);
-      return {
+async function getAppRules(appKey) {
+  const appPath = "/apps/" + appKey + "/app.properties.json";
+  console.log("Fetching app rules from:", appPath);
+  try {
+    const res = await fetch(appPath);
+    if (!res.ok) throw new Error('Network response was not ok');
+    const rules = await res.json();
+    console.log("Fetched app rules:", rules);
+    appRules[appKey] = rules;
+    return rules;
+  } catch (error) {
+    console.error(`Failed to fetch app rules: ${appPath}`, error);
+    // If fetch failed, use cached from API or default
+    if (appRules[appKey]) {
+      console.log("Using cached app rules:", appRules[appKey], "for app:", appKey);
+      return appRules[appKey];
+    } else {
+      const defaultRules = {
         maxInstances: 1,
         stack: false,
         resizable: true,
@@ -83,16 +114,18 @@ async function getAppRules(app) {
         maximize: true,
         taskbarIcon: false
       };
+      appRules[appKey] = defaultRules;
+      return defaultRules;
     }
   }
 }
 
-function openApp(appKey) {
+async function openApp(appKey) {
   const appPath = "/apps/" + appKey;
-  const rules = getAppRules(`${appPath}/app.properties.json`);
+  const rules = await getAppRules(appKey);
 
-  appInstances[appPath] = appInstances[appPath] || [];
-  const instances = appInstances[appPath];
+  appInstances[appKey] = appInstances[appKey] || [];
+  const instances = appInstances[appKey];
 
   // enforce max instances (unless -1)
   if (rules.maxInstances !== -1 && instances.length >= rules.maxInstances) {
@@ -204,7 +237,23 @@ function openApp(appKey) {
   }
 
   makeDraggable(win);
-  updateTaskbarIndicator(appPath);
+
+ // Use launcher as indicator ONLY if stackable
+ console.log("App rules for", appKey, ":", rules);
+ console.log("Launcher element:", document.querySelector(`[data-app="${appKey}"]`));
+  const launcher = document.querySelector(`[data-app="${appKey}"]`);
+  console.log("Launcher found:", launcher);
+  console.log("Stack rule:", rules.stack);  
+  console.log("Taskbar Icon rule:", rules.taskbarIcon);
+  if (launcher && rules.stack) {
+    if (!launcher.querySelector(".taskbar-indicator")) {
+      const bar = document.createElement("div");
+      bar.className = "taskbar-indicator";
+      launcher.appendChild(bar);
+    }
+  }
+
+  updateTaskbarIndicator(appKey);
 }
 
 function focusWindow(win) {
@@ -214,10 +263,11 @@ function focusWindow(win) {
 }
 
 function closeWindow(win) {
-  const appPath = win.dataset.app;
-  appInstances[appPath] = appInstances[appPath].filter((w) => w !== win);
+  const appKey = win.dataset.appKey;
+  appInstances[appKey] = appInstances[appKey].filter((w) => w !== win);
   win.remove();
-  updateTaskbarIndicator(appPath);
+  updateTaskbarIndicator(appKey);
+  const appPath = win.dataset.app;
   if (loadedModules[appPath]) {
     delete loadedModules[appPath];
   }
@@ -226,31 +276,19 @@ function closeWindow(win) {
 function minimizeWindow(win) {
   win.dataset.minimized = "true";
   win.style.display = "none";
-  updateTaskbarIndicator(win.dataset.app);
+  updateTaskbarIndicator(win.dataset.appKey);
 }
 
-function updateTaskbarIndicator(appPath) {
-  const appKey = getAppKey(appPath);
-  const rules = getAppRules(appKey);
-  if (!rules.stack) return;
-
+function updateTaskbarIndicator(appKey) {
+  const rules = appRules[appKey] || {};
   const launcher = document.querySelector(`[data-app="${appKey}"]`);
-  if (!launcher) return;
 
-  const instances = appInstances[appPath] || [];
-  const hasAny = instances.length > 0;
+  const instances = appInstances[appKey] || [];
+  const show = instances.length > 0;
 
-  let bar = launcher.querySelector(".taskbar-indicator");
-
-  if (!bar && hasAny) {
-    bar = document.createElement("div");
-    bar.className = "taskbar-indicator";
-    launcher.appendChild(bar);
-  }
-
-  if (bar) {
-    bar.style.display = hasAny ? "block" : "none";
-    bar.style.height = instances.length > 1 ? "4px" : "2px";
+  if (launcher && rules.stack) {
+    const bar = launcher.querySelector(".taskbar-indicator");
+    if (bar) bar.style.display = show ? "block" : "none";
   }
 }
 
@@ -274,11 +312,11 @@ async function createLivePreview(win) {
   return preview;
 }
 
-async function openStackMenu(appPath, icon) {
+async function openStackMenu(app, icon) {
   // remove any other app's stack menu
   document.querySelectorAll(".stack-menu").forEach(m => m.remove());
 
-  const instances = appInstances[appPath] || [];
+  const instances = appInstances[app] || [];
   if (instances.length === 0) return;
 
   const menu = document.createElement("div");
@@ -297,7 +335,7 @@ async function openStackMenu(appPath, icon) {
     item.innerHTML = `
       <div class="stack-left">
         <span class="stack-icon">⬇️</span>
-        <span class="stack-title">${getAppKey(appPath).toUpperCase()} (${i + 1})</span>
+        <span class="stack-title">${app.toUpperCase()} (${i + 1})</span>
         <button class="stack-close">✕</button>
       </div>
     `;
@@ -329,7 +367,7 @@ async function openStackMenu(appPath, icon) {
     const taskbarHeight = 54;
 
     let top = rect.top - menuRect.height - 10;
-    let left = rect.left + rect.width / 2 - menuRect.width / 2;
+    let left = rect.left;
 
     if (top < 0) {
       top = rect.bottom + 10;
@@ -349,22 +387,17 @@ async function openStackMenu(appPath, icon) {
   });
 
   menu.addEventListener("mouseenter", () => {
-    clearTimeout(menuTimers[getAppKey(appPath)]);
-    activeStackApp = getAppKey(appPath);
+    clearTimeout(menuTimers[app]);
   });
 
   menu.addEventListener("mouseleave", () => {
-    const key = getAppKey(appPath);
-    menuTimers[key] = setTimeout(() => {
+    menuTimers[app] = setTimeout(() => {
       menu.remove();
-      activeStackApp = null;
-    }, 250);
+    }, 200);
   });
 }
 
-// ==========================
-// WINDOWS
-// ==========================
+
 function maximizeWindow(win) {
   if (win.classList.contains("maximized")) {
     win.classList.remove("maximized");
@@ -463,25 +496,15 @@ document.querySelectorAll("[data-app]").forEach((btn) => {
 
   // hover menu only for launcher
   btn.addEventListener("mouseenter", () => {
-    const appKey = btn.dataset.app;
-    const rules = getAppRules(appKey);
-    if (!rules.stack) return;
-
-    activeStackApp = appKey;
-    clearTimeout(menuTimers[appKey]);
-    openStackMenu("/apps/" + appKey, btn);
+    clearTimeout(menuTimers[btn.dataset.app]);
+    const rules = appRules[btn.dataset.app] || {};
+    if (rules.stack) openStackMenu(btn.dataset.app, btn);
   });
 
   btn.addEventListener("mouseleave", () => {
-    const appKey = btn.dataset.app;
-    menuTimers[appKey] = setTimeout(() => {
-      if (activeStackApp === appKey) {
-        const menu = document.querySelector(".stack-menu");
-        if (menu && !menu.matches(":hover")) {
-          menu.remove();
-          activeStackApp = null;
-        }
-      }
-    }, 250);
+    menuTimers[btn.dataset.app] = setTimeout(() => {
+      const menu = document.querySelector(".stack-menu");
+      if (menu && !menu.matches(":hover")) menu.remove();
+    }, 200);
   });
 });
