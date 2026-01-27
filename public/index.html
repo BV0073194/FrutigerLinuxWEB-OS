@@ -56,6 +56,20 @@
       }
     }
   </script>
+
+  <div id="uacOverlay" class="uac-overlay hidden">
+    <div class="uac-modal">
+      <h2>⚠️ System Permission Required</h2>
+
+      <div id="uacPages"></div>
+
+      <div class="uac-actions">
+        <button class="btn" onclick="denyUAC()">Cancel</button>
+        <button class="btn primary" onclick="approveUAC()">Allow</button>
+      </div>
+    </div>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
   <canvas id="previewCanvas" style="display:none;"></canvas>
 </body>

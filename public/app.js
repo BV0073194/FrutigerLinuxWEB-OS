@@ -13,6 +13,20 @@ let zIndexCounter = 1;
 var loadedModules = {};
 
 // ==========================
+// SOCKET.IO
+// ==========================
+const socket = io();
+let socketId = null;
+
+socket.on("connect", () => {
+  socketId = socket.id;
+});
+
+socket.on("uac:required", ({ command, risks }) => {
+  showUAC(risks);
+});
+
+// ==========================
 // PINNED LAUNCHER HELPER ✅
 // ==========================
 function createPinnedLauncher(appName, iconSrc) {
@@ -733,45 +747,45 @@ setInterval(() => {
 }, 1000);
 
 // DOUBLE CLICK LAUNCHER SETUP
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-app]");
-  if (!btn) return;
+document.querySelectorAll(".task-icon[data-app], .start-tile[data-app]").forEach((btn) => {
+  let clickCount = 0;
+  let timer = null;
 
-  let clickCount = btn._clickCount || 0;
-  let timer = btn._clickTimer;
+  btn.addEventListener("click", () => {
+    // 🛑 block app-content clicks
+    if (btn.closest(".window")) return;
 
-  clickCount++;
-  btn._clickCount = clickCount;
+    clickCount++;
 
-  if (clickCount === 1) {
-    timer = setTimeout(() => {
-      btn._clickCount = 0;
+    if (clickCount === 1) {
+      timer = setTimeout(() => {
+        clickCount = 0;
 
-      const appKey = btn.dataset.app;
-      const instances = appInstances[appKey] || [];
-      const minimized = instances.filter(w => w.dataset.minimized === "true");
+        const appKey = btn.dataset.app;
+        const instances = appInstances[appKey] || [];
+        const minimized = instances.filter(w => w.dataset.minimized === "true");
 
-      if (minimized.length > 0) {
-        minimized.sort((a, b) => b.minimizedAt - a.minimizedAt);
-        focusWindow(minimized[0]);
-      } else {
-        const rules = appRules[appKey] || {};
-        if (rules.stack && instances.length > 0) {
-          openStackMenu(appKey, btn);
+        if (minimized.length > 0) {
+          minimized.sort((a, b) => b.minimizedAt - a.minimizedAt);
+          focusWindow(minimized[0]);
+        } else {
+          const rules = appRules[appKey] || {};
+          if (rules.stack && instances.length > 0) {
+            openStackMenu(appKey, btn);
+          }
         }
-      }
-    }, 250);
+      }, 250);
+    }
 
-    btn._clickTimer = timer;
-  }
-
-  if (clickCount === 2) {
-    clearTimeout(timer);
-    btn._clickCount = 0;
-    openApp(btn.dataset.app);
-    startMenu.style.display = "none";
-  }
+    if (clickCount === 2) {
+      clearTimeout(timer);
+      clickCount = 0;
+      openApp(btn.dataset.app);
+      startMenu.style.display = "none";
+    }
+  });
 });
+
 
 document.addEventListener("mouseenter", (e) => {
   const btn = e.target.closest("[data-app]");
@@ -803,3 +817,53 @@ document.addEventListener("mouseleave", (e) => {
     }
   }, 200);
 }, true); // <-- CAPTURE PHASE
+
+
+// COM communication
+function showUAC(risks) {
+  const overlay = document.getElementById("uacOverlay");
+  const pages = document.getElementById("uacPages");
+
+  pages.innerHTML = "";
+
+  risks.forEach(risk => {
+    const page = document.createElement("div");
+    page.className = "uac-page";
+    page.innerHTML = `
+      <p><strong>Warning:</strong> This command uses <code>${risk}</code></p>
+      <p>This may modify system files or permissions.</p>
+    `;
+    pages.appendChild(page);
+  });
+
+  overlay.classList.remove("hidden");
+}
+
+function approveUAC() {
+  socket.emit("uac:approve");
+  closeUAC();
+}
+
+function denyUAC() {
+  socket.emit("uac:deny");
+  closeUAC();
+}
+
+function closeUAC() {
+  document.getElementById("uacOverlay").classList.add("hidden");
+}
+// ==============================
+
+
+// EXECUTE COMMAND VIA API
+function execCommand(command) {
+  fetch("/api/exec", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-socket-id": socketId
+    },
+    body: JSON.stringify({ command })
+  });
+}
+// ==============================

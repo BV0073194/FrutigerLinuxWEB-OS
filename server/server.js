@@ -2,9 +2,14 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-
+const http = require("http");
+const { Server } = require("socket.io");
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 const PORT = process.env.PORT || 3000;
+
+const pendingUAC = new Map(); // socket.id -> { command, risks }
 
 // ==============================
 // PATHS
@@ -170,6 +175,100 @@ app.get("*", (req, res) => {
 // ==============================
 // START SERVER
 // ==============================
-app.listen(PORT, () => {
-  console.log(`🚀 FrutigerLinux WEB-OS running at http://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+
+// com
+
+const { exec } = require("child_process");
+
+const BLACKLISTED_COMMANDS = [
+  'rm -rf /',
+  ':(){ :|:& };:', // fork bomb
+  'mkfs',
+  'dd if=',
+];
+
+const RISKY_KEYWORDS = [
+  'sudo',
+  'rm',
+  'chmod',
+  'chown',
+  'apt',
+  'dnf',
+  'pacman',
+  'systemctl',
+  'service',
+  'kill',
+  'cat /dev',
+];
+
+app.post("/api/exec", async (req, res) => {
+  const { command } = req.body;
+  const socketId = req.headers["x-socket-id"];
+  const socket = socketClients.get(socketId);
+
+  if (!socket) {
+    return res.status(403).json({ error: "No active session" });
+  }
+
+  // 🚫 Hard blacklist (never allowed)
+  const blacklistedCommands = [
+    "rm -rf /",
+    ":(){ :|:& };:",
+  ];
+
+  if (blacklistedCommands.some(bad => command.includes(bad))) {
+    return res.status(403).json({ error: "Command permanently blocked" });
+  }
+
+  // ⚠️ Commands requiring UAC
+  const riskyPatterns = ["sudo", "rm", "dd", "mount", "chmod", "chown"];
+
+  const risks = riskyPatterns.filter(r => command.includes(r));
+
+  if (risks.length > 0 && !socket.uacApproved) {
+    socket.emit("uac:required", {
+      command,
+      risks
+    });
+
+    return res.json({ pending: true });
+  }
+
+  socket.uacApproved = false; // reset after use
+
+  exec(command, (error, stdout, stderr) => {
+    socket.emit("exec:result", {
+      success: !error,
+      stdout,
+      stderr,
+      error: error?.message
+    });
+  });
+
+  res.json({ success: true });
+});
+
+
+// UAC socket.io
+const socketClients = new Map();
+
+io.on("connection", (socket) => {
+  console.log("🔌 Client connected:", socket.id);
+  socketClients.set(socket.id, socket);
+
+  socket.on("disconnect", () => {
+    socketClients.delete(socket.id);
+  });
+
+  socket.on("uac:approve", () => {
+    socket.uacApproved = true;
+  });
+
+  socket.on("uac:deny", () => {
+    socket.uacApproved = false;
+  });
+});
+// ==============================
