@@ -12,36 +12,55 @@ const taskbarIcons = document.querySelector(".taskbar-icons");
 let zIndexCounter = 1;
 var loadedModules = {};
 
+// ==========================
+// PINNED LAUNCHER HELPER ✅
+// ==========================
+function createPinnedLauncher(appName, iconSrc) {
+  // prevent duplicates
+  if (taskbarIcons.querySelector(`[data-app="${appName}"]`)) return;
+
+  const btn = document.createElement("button");
+  btn.className = "task-icon launcher";
+  btn.dataset.app = appName;
+  btn.title = appName;
+
+  btn.innerHTML = `
+    <img src="${iconSrc}" 
+         alt="${appName}" 
+         class="app-icon"
+         style="width:100%;height:100%;object-fit:contain;"
+         onload="validateIconSize(this)">
+  `;
+
+  taskbarIcons.appendChild(btn);
+}
+
+// ==========================
+// STATE SAVE / LOAD
+// ==========================
 async function saveDesktopState() {
   const windows = [];
   document.querySelectorAll('.window').forEach(win => {
-    const appKey = win.dataset.appKey;
-    const rect = win.getBoundingClientRect();
-    const minimized = win.dataset.minimized === 'true';
-    const maximized = win.classList.contains('maximized');
-    const zIndex = parseInt(win.style.zIndex) || 1;
-    const preview = minimized ? win.storedPreview : null;
     windows.push({
-      appKey,
+      appKey: win.dataset.appKey,
       top: win.style.top,
       left: win.style.left,
       width: win.style.width,
       height: win.style.height,
-      minimized,
-      maximized,
-      zIndex,
-      preview
+      minimized: win.dataset.minimized === 'true',
+      maximized: win.classList.contains('maximized'),
+      zIndex: parseInt(win.style.zIndex) || 1,
+      preview: win.dataset.minimized === 'true' ? win.storedPreview : null
     });
   });
+
   try {
     await fetch('/api/save-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ windows, zIndexCounter })
     });
-  } catch (err) {
-    console.warn('Failed to save state:', err);
-  }
+  } catch {}
 }
 
 async function loadDesktopState() {
@@ -49,66 +68,29 @@ async function loadDesktopState() {
     const res = await fetch('/api/load-state');
     const state = await res.json();
     zIndexCounter = state.zIndexCounter || 1;
+
     for (const winState of state.windows) {
       await openApp(winState.appKey);
-      // Get the last opened window for this app
-      const instances = appInstances[winState.appKey];
-      if (instances && instances.length > 0) {
-        const win = instances[instances.length - 1];
-        win.style.top = winState.top;
-        win.style.left = winState.left;
-        win.style.width = winState.width;
-        win.style.height = winState.height;
-        win.dataset.minimized = winState.minimized ? 'true' : 'false';
-        win.style.zIndex = winState.zIndex;
-        if (winState.minimized) {
-          win.style.display = 'none';
-          if (winState.preview) {
-            win.storedPreview = winState.preview;
-          }
-        }
-        if (winState.maximized) {
-          win.classList.add('maximized');
-        }
-        updateTaskbarIndicator(winState.appKey);
+      const win = appInstances[winState.appKey]?.at(-1);
+      if (!win) continue;
+
+      Object.assign(win.style, {
+        top: winState.top,
+        left: winState.left,
+        width: winState.width,
+        height: winState.height,
+        zIndex: winState.zIndex
+      });
+
+      win.dataset.minimized = winState.minimized ? "true" : "false";
+      if (winState.minimized) {
+        win.style.display = "none";
+        win.storedPreview = winState.preview;
       }
+      if (winState.maximized) win.classList.add("maximized");
+      updateTaskbarIndicator(winState.appKey);
     }
-  } catch (err) {
-    console.warn('Failed to load state:', err);
-  }
-}
-
-
-async function captureWindowPreview(windowEl) {
-  const canvas = document.getElementById("previewCanvas");
-  const ctx = canvas.getContext("2d");
-
-  const rendered = await html2canvas(windowEl, { backgroundColor: null });
-
-  canvas.width = rendered.width;
-  canvas.height = rendered.height;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(rendered, 0, 0);
-
-  return canvas.toDataURL("image/png");
-}
-
-function toggleStart() {
-  startMenu.style.display = startMenu.style.display === "block" ? "none" : "block";
-}
-
-startBtn.addEventListener("click", toggleStart);
-closeStart.addEventListener("click", () => (startMenu.style.display = "none"));
-
-document.addEventListener("click", (e) => {
-  if (!startMenu.contains(e.target) && !startBtn.contains(e.target)) {
-    startMenu.style.display = "none";
-  }
-});
-
-// helper: convert "/apps/software" => "software"
-function getAppKey(app) {
-  return app.replace("/apps/", "");
+  } catch {}
 }
 
 // ==========================
@@ -117,7 +99,7 @@ function getAppKey(app) {
 var appRules = {};
 
 // ==========================
-// COMMUNITY APPS LOADER
+// COMMUNITY APPS LOADER ✅
 // ==========================
 async function loadCommunityApps() {
   try {
@@ -127,45 +109,34 @@ async function loadCommunityApps() {
     for (const app of apps) {
       appRules[app.name] = app.rules;
 
-      // Get icon from appico tag
+      // icon detection
       try {
-        const htmlRes = await fetch(`/apps/${app.name}/index.html`);
-        const html = await htmlRes.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const appico = doc.querySelector('appico');
-        if (appico && appico.getAttribute('src')) {
-          appRules[app.name].icon = appico.getAttribute('src');
-        } else {
-          appRules[app.name].icon = `/apps/${app.name}/icon.png`;
-        }
-      } catch (err) {
+        const html = await (await fetch(`/apps/${app.name}/index.html`)).text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const ico = doc.querySelector("appico")?.getAttribute("src");
+        appRules[app.name].icon = ico || `/apps/${app.name}/icon.png`;
+      } catch {
         appRules[app.name].icon = `/apps/${app.name}/icon.png`;
       }
 
-      // Add to taskbar and start menu if taskbarIcon is true
-      if (app.rules.taskbarIcon) {
-        // Check if already exists
-        if (!document.querySelector(`.taskbar-icons [data-app="${app.name}"]`)) {
-          // Taskbar icon
-          const taskIcon = document.createElement("button");
-          taskIcon.className = "task-icon";
-          taskIcon.dataset.app = app.name;
-          taskIcon.title = app.name;
-          taskIcon.innerHTML = `<img src="${appRules[app.name].icon}" alt="${app.name}" class="app-icon" style="width: 100%; height: 100%; object-fit: contain;" onload="validateIconSize(this)">`;
-          taskbarIcons.appendChild(taskIcon);
-        }
+      // ✅ AUTO PIN TO TASKBAR (NEW)
+      if (app.rules.addToTaskbar === true) {
+        createPinnedLauncher(app.name, appRules[app.name].icon);
+      }
 
+      // existing start menu logic untouched
+      if (app.rules.taskbarIcon) {
         if (!document.querySelector(`.start-menu-grid [data-app="${app.name}"]`)) {
-          // Start menu tile
-          const startTile = document.createElement("button");
-          startTile.className = "start-tile";
-          startTile.dataset.app = app.name;
-          startTile.innerHTML = `
-            <div class="tile-icon"><img src="${appRules[app.name].icon}" alt="${app.name}" class="app-icon" style="width: 100%; height: 100%; object-fit: contain;" onload="validateIconSize(this)"></div>
+          const tile = document.createElement("button");
+          tile.className = "start-tile";
+          tile.dataset.app = app.name;
+          tile.innerHTML = `
+            <div class="tile-icon">
+              <img src="${appRules[app.name].icon}" class="app-icon">
+            </div>
             <div class="tile-title">${app.name}</div>
           `;
-          document.querySelector('.start-menu-grid').appendChild(startTile);
+          document.querySelector(".start-menu-grid").appendChild(tile);
         }
       }
     }
@@ -174,10 +145,8 @@ async function loadCommunityApps() {
   }
 }
 
-// run loader
-loadCommunityApps().then(() => {
-  loadDesktopState();
-});
+// boot
+loadCommunityApps().then(loadDesktopState);
 
 // Periodic save every 30 seconds
 setInterval(saveDesktopState, 30000);
@@ -365,14 +334,32 @@ async function openApp(appKey) {
   // For non-stacking apps, create individual taskbar icon
   if (!rules.stack) {
     const icon = document.createElement("button");
-    icon.className = "task-icon";
+    icon.className = "task-icon runtime-task-icon";
+    icon.dataset.runtime = "true";
+
     const iconSrc = rules.icon || `/apps/${appKey}/icon.png`;
-    icon.innerHTML = `<img src="${iconSrc}" alt="${appKey}" class="app-icon" style="width: 100%; height: 100%; object-fit: contain;" onload="validateIconSize(this)">`;
-    icon.win = win;
+
+    icon.innerHTML = `
+      <img src="${iconSrc}" alt="${appKey}" class="app-icon"
+          style="width: 100%; height: 100%; object-fit: contain;"
+          onload="validateIconSize(this)">
+      <button class="task-close-btn">✕</button>
+    `;
+
+    // Click icon → focus window
     icon.addEventListener("click", () => {
-      focusWindow(icon.win);
+      focusWindow(win);
     });
+
+    // Click close → close THIS window + remove THIS icon
+    icon.querySelector(".task-close-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeWindow(win);
+    });
+
     taskbarIcons.appendChild(icon);
+
+    // 🔑 critical: bind icon to this window
     win.taskbarIcon = icon;
   }
 
@@ -746,53 +733,73 @@ setInterval(() => {
 }, 1000);
 
 // DOUBLE CLICK LAUNCHER SETUP
-document.querySelectorAll("[data-app]").forEach((btn) => {
-  let clickCount = 0;
-  let timer = null;
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-app]");
+  if (!btn) return;
 
-  btn.addEventListener("click", () => {
-    clickCount++;
+  let clickCount = btn._clickCount || 0;
+  let timer = btn._clickTimer;
 
-    if (clickCount === 1) {
-      timer = setTimeout(() => {
-        clickCount = 0;
-        // Single click: open most recent minimized window
-        const appKey = btn.dataset.app;
-        const instances = appInstances[appKey] || [];
-        const minimizedInstances = instances.filter(win => win.dataset.minimized === "true");
-        if (minimizedInstances.length > 0) {
-          // Sort by minimization time, most recent first
-          minimizedInstances.sort((a, b) => b.minimizedAt - a.minimizedAt);
-          focusWindow(minimizedInstances[0]);
-        } else {
-          // If no minimized, show stack menu if applicable
-          const rules = appRules[appKey] || {};
-          if (rules.stack && instances.length > 0) {
-            openStackMenu(appKey, btn);
-          }
+  clickCount++;
+  btn._clickCount = clickCount;
+
+  if (clickCount === 1) {
+    timer = setTimeout(() => {
+      btn._clickCount = 0;
+
+      const appKey = btn.dataset.app;
+      const instances = appInstances[appKey] || [];
+      const minimized = instances.filter(w => w.dataset.minimized === "true");
+
+      if (minimized.length > 0) {
+        minimized.sort((a, b) => b.minimizedAt - a.minimizedAt);
+        focusWindow(minimized[0]);
+      } else {
+        const rules = appRules[appKey] || {};
+        if (rules.stack && instances.length > 0) {
+          openStackMenu(appKey, btn);
         }
-      }, 250);
-    }
+      }
+    }, 250);
 
-    if (clickCount === 2) {
-      clearTimeout(timer);
-      clickCount = 0;
-      openApp(btn.dataset.app);
-      startMenu.style.display = "none";
-    }
-  });
+    btn._clickTimer = timer;
+  }
 
-  // hover menu only for launcher
-  btn.addEventListener("mouseenter", () => {
-    clearTimeout(menuTimers[btn.dataset.app]);
-    const rules = appRules[btn.dataset.app] || {};
-    if (rules.stack) openStackMenu(btn.dataset.app, btn);
-  });
-
-  btn.addEventListener("mouseleave", () => {
-    menuTimers[btn.dataset.app] = setTimeout(() => {
-      const menu = document.querySelector(".stack-menu");
-      if (menu && !menu.matches(":hover")) menu.remove();
-    }, 200);
-  });
+  if (clickCount === 2) {
+    clearTimeout(timer);
+    btn._clickCount = 0;
+    openApp(btn.dataset.app);
+    startMenu.style.display = "none";
+  }
 });
+
+document.addEventListener("mouseenter", (e) => {
+  const btn = e.target.closest("[data-app]");
+  if (!btn) return;
+
+  const appKey = btn.dataset.app;
+  const rules = appRules[appKey] || {};
+
+  if (!rules.stack) return;
+
+  clearTimeout(menuTimers[appKey]);
+
+  menuTimers[appKey] = setTimeout(() => {
+    openStackMenu(appKey, btn);
+  }, 300);
+}, true); // <-- CAPTURE PHASE (important)
+
+document.addEventListener("mouseleave", (e) => {
+  const btn = e.target.closest("[data-app]");
+  if (!btn) return;
+
+  const appKey = btn.dataset.app;
+
+  menuTimers[appKey] = setTimeout(() => {
+    const menu = document.querySelector(".stack-menu");
+    if (menu && !menu.matches(":hover")) {
+      menu.remove();
+      hideAllTempUnminimized();
+    }
+  }, 200);
+}, true); // <-- CAPTURE PHASE

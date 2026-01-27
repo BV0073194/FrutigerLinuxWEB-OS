@@ -4,5 +4,6 @@
     "resizable": true,
     "minimize": true,
     "maximize": true,
-    "taskbarIcon": false
+    "taskbarIcon": false,
+    "addToTaskbar": true
 }

@@ -559,3 +559,67 @@ button { font-family: inherit; }
   object-fit: cover;
   border-radius: 6px;
 }
+
+/* =========================
+   RUNTIME (NON-STACK) TASK ICONS
+   ========================= */
+
+.runtime-task-icon {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.18),
+    0 8px 18px rgba(0,0,0,0.35);
+}
+
+/* running indicator */
+.runtime-task-icon::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 55%;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    rgba(255,255,255,0.25),
+    rgba(255,255,255,0.85),
+    rgba(255,255,255,0.25)
+  );
+}
+
+/* =========================
+   TASKBAR RUNTIME CLOSE BUTTON
+   ========================= */
+
+.task-close-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.35);
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+
+/* show close button only on hover */
+.runtime-task-icon:hover .task-close-btn {
+  display: flex;
+}
+
+.task-close-btn:hover {
+  background: rgba(220,60,60,0.85);
+  border-color: rgba(255,255,255,0.6);
+}
