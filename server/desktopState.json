@@ -1,4 +1,17 @@
 {
-  "windows": [],
-  "zIndexCounter": 78
+  "windows": [
+    {
+      "appKey": "os",
+      "top": "70px",
+      "left": "70px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 83,
+      "preview": null
+    }
+  ],
+  "zIndexCounter": 83,
+  "timestamp": 1769494493574
 }

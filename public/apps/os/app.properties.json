@@ -1,6 +1,6 @@
 {
-    "maxInstances": 1,
-    "stack": true,
+    "maxInstances": -1,
+    "stack": false,
     "resizable": false,
     "minimize": true,
     "maximize": false,
