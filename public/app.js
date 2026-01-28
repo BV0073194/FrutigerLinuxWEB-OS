@@ -1371,20 +1371,75 @@ async function execCommand(command) {
 
 function attachNativeApp(win, rules) {
   const body = win.querySelector(".window-body");
+  const instanceId = win.dataset.instanceId;
 
-  body.innerHTML = `
-    <iframe
-      class="native-stream"
-      src="/stream/${win.dataset.instanceId}"
-      frameborder="0"
-      allow="autoplay; fullscreen"
-      style="width:100%; height:100%; background:black;">
-    </iframe>
-  `;
+  body.innerHTML = `<div class="loading">Launching ${rules.stream || 'app'}...</div>`;
 
+  // Create one-time listeners for this specific instance
+  const streamHandler = (data) => {
+    if (data.instanceId === instanceId) {
+      if (data.external) {
+        // External application (like Moonlight) - show message instead of iframe
+        body.innerHTML = `
+          <div style="padding:30px;text-align:center;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;border-radius:8px;margin:20px;">
+            <h2 style="margin:0 0 20px 0;font-size:24px;">🎮 ${data.type === 'moonlight' ? 'Moonlight Qt' : 'External App'} Launched</h2>
+            <p style="margin:15px 0;font-size:18px;line-height:1.6;">${data.message || 'Application running in separate window.'}</p>
+            <div style="background:rgba(255,255,255,0.1);padding:15px;border-radius:6px;margin:20px 0;">
+              <p style="margin:0;font-size:14px;opacity:0.9;">👀 Look for the application window on your desktop</p>
+            </div>
+            <p style="color:rgba(255,255,255,0.7);margin-top:25px;font-size:13px;">💡 Close this window to stop the stream</p>
+          </div>
+        `;
+      } else if (data.url) {
+        // Embedded stream (like Xpra)
+        body.innerHTML = `
+          <iframe
+            class="native-stream"
+            src="${data.url}"
+            frameborder="0"
+            allow="autoplay; fullscreen"
+            style="width:100%; height:100%; background:black;">
+          </iframe>
+        `;
+      }
+    }
+  };
+  
+  const errorHandler = (data) => {
+    if (data.instanceId === instanceId) {
+      body.innerHTML = `
+        <div style="padding:30px;text-align:center;background:#ff4757;color:white;border-radius:8px;margin:20px;">
+          <h3 style="margin:0 0 15px 0;font-size:20px;">❌ Launch Failed</h3>
+          <p style="margin:15px 0;font-size:15px;line-height:1.6;">${data.error}</p>
+          <div style="background:rgba(0,0,0,0.2);padding:15px;border-radius:6px;margin:20px 0;font-size:13px;text-align:left;">
+            <p style="margin:5px 0;"><strong>Troubleshooting:</strong></p>
+            <p style="margin:5px 0;">• Make sure Sunshine is installed (flatpak)</p>
+            <p style="margin:5px 0;">• Make sure Moonlight is installed (flatpak)</p>
+            <p style="margin:5px 0;">• Pair Moonlight with Sunshine first</p>
+            <p style="margin:5px 0;">• Check Sunshine web UI: http://localhost:47990</p>
+          </div>
+        </div>
+      `;
+    }
+  };
+  
+  // Add event listeners
+  socket.on("app:stream", streamHandler);
+  socket.on("app:error", errorHandler);
+  
+  // Clean up listeners when window closes
+  const originalClose = win.querySelector("[data-action='close']");
+  if (originalClose) {
+    originalClose.addEventListener('click', () => {
+      socket.off("app:stream", streamHandler);
+      socket.off("app:error", errorHandler);
+    }, { once: true });
+  }
+
+  // Emit launch request
   socket.emit("native:launch", {
     appKey: win.dataset.appKey,
-    instanceId: win.dataset.instanceId,
+    instanceId: instanceId,
     command: rules.command,
     stream: rules.stream || "xpra"
   });

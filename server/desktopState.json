@@ -1,4 +1,17 @@
 {
-  "windows": [],
-  "zIndexCounter": 15
+  "windows": [
+    {
+      "appKey": "firefox",
+      "instanceId": "21b4f953-e290-485a-bb6a-81590a0662ce",
+      "top": "70px",
+      "left": "70px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 12,
+      "preview": null
+    }
+  ],
+  "zIndexCounter": 12
 }

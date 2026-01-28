@@ -351,6 +351,11 @@ io.on("connection", (socket) => {
       exec(`xpra stop ${session.display}`, (err) => {
         if (err) console.error("Error stopping xpra:", err);
       });
+    } else if (session.type === 'moonlight') {
+      // Kill Moonlight client
+      exec('pkill -f moonlight', (err) => {
+        if (err) console.error('Error stopping Moonlight:', err);
+      });
     }
 
     try {
@@ -447,18 +452,87 @@ function launchXpra(appKey, rules, socket, instanceId) {
 }
 
 function launchSunshine(appKey, rules, socket, instanceId) {
-  const sunshineUrl = "http://localhost:47989"; // Default Sunshine web UI port
-  const cmd = `sunshine "${rules.command}"`;
+  // Sunshine is a game streaming SERVER - we need to launch Moonlight CLIENT
+  // The command in app.properties.json should be the app to stream (e.g., "steam")
   
-  console.log(`🚀 Launching Sunshine: ${cmd}`);
+  // First, check if Sunshine server is running (check for flatpak process)
+  exec('pgrep -f "flatpak.*sunshine"', (err, stdout) => {
+    if (err || !stdout.trim()) {
+      // Sunshine not running, start it via flatpak
+      console.log('⚙️ Starting Sunshine server...');
+      exec('flatpak run dev.lizardbyte.app.Sunshine &', (sunErr) => {
+        if (sunErr) {
+          console.error('❌ Failed to start Sunshine:', sunErr);
+        }
+      });
+      
+      // Wait for Sunshine to start
+      setTimeout(() => launchMoonlightClient(appKey, rules, socket, instanceId), 3000);
+    } else {
+      // Sunshine already running
+      launchMoonlightClient(appKey, rules, socket, instanceId);
+    }
+  });
+}
 
-  const proc = exec(cmd, (err) => {
-    if (err) {
-      console.error("❌ Sunshine launch error:", err);
+function launchMoonlightClient(appKey, rules, socket, instanceId) {
+  // Launch Moonlight Qt to connect to localhost Sunshine server
+  // Moonlight opens in its own window (not embedded in browser)
+  
+  // Check if Moonlight is installed via flatpak
+  exec('flatpak list 2>/dev/null | grep -i moonlight', (flatErr, flatOut) => {
+    if (!flatErr && flatOut.trim()) {
+      // Flatpak version found - this is the recommended method
+      const appName = rules.command || 'Desktop';
+      console.log(`🎮 Launching Moonlight (flatpak) for app: ${appName}`);
+      
+      // Launch Moonlight with DISPLAY set (important for GUI apps)
+      const moonlightCmd = `DISPLAY=${process.env.DISPLAY || ':0'} flatpak run com.moonlight_stream.Moonlight stream localhost "${appName}" &`;
+      executeMoonlight(moonlightCmd, appKey, socket, instanceId, rules);
+      return;
+    }
+    
+    // Try native installation
+    exec('which moonlight-qt', (err, nativePath) => {
+      if (!err && nativePath.trim()) {
+        const appName = rules.command || 'Desktop';
+        console.log(`🎮 Launching Moonlight (native) for app: ${appName}`);
+        const moonlightCmd = `moonlight-qt stream localhost "${appName}" &`;
+        executeMoonlight(moonlightCmd, appKey, socket, instanceId, rules);
+        return;
+      }
+      
+      // Moonlight not found
+      console.error('❌ Moonlight not found');
       socket.emit("app:error", { 
         appKey, 
         instanceId, 
-        error: "Failed to launch Sunshine. Is Sunshine installed and configured?" 
+        error: "Moonlight Qt not installed.\n\nInstall it with:\nflatpak install flathub com.moonlight_stream.Moonlight\n\nThen pair it with Sunshine at http://localhost:47990" 
+      });
+    });
+  });
+}
+
+function executeMoonlight(cmd, appKey, socket, instanceId, rules) {
+  console.log(`🚀 Executing: ${cmd}`);
+  
+  const proc = exec(cmd, (err, stdout, stderr) => {
+    if (err) {
+      console.error("❌ Moonlight launch error:", err);
+      console.error("stderr:", stderr);
+      
+      let errorMsg = "Failed to launch Moonlight.";
+      
+      if (stderr.includes('Failed to connect') || stderr.includes('Connection refused')) {
+        errorMsg = `Cannot connect to Sunshine server.\n\n1. Make sure Sunshine is running:\n   flatpak run dev.lizardbyte.app.Sunshine\n2. Check Sunshine web UI: http://localhost:47990\n3. Make sure the app "${rules.command}" is configured in Sunshine`;
+      } else if (stderr.includes('not paired') || stderr.includes('pairing')) {
+        errorMsg = `Moonlight not paired with Sunshine.\n\n1. Open Moonlight manually\n2. Add PC: localhost\n3. Enter PIN from Sunshine web UI (http://localhost:47990)`;
+      }
+      
+      socket.emit("app:error", { 
+        appKey, 
+        instanceId, 
+        error: errorMsg
       });
       return;
     }
@@ -468,23 +542,25 @@ function launchSunshine(appKey, rules, socket, instanceId) {
   nativeSessions.set(instanceId, {
     appKey,
     pid: proc.pid,
-    type: "sunshine",
-    url: sunshineUrl
+    type: "moonlight",
+    display: "external",
+    command: rules.command
   });
 
-  // Give Sunshine time to start
+  // Notify client that Moonlight launched
   setTimeout(() => {
-    console.log(`✅ Sunshine stream ready: ${sunshineUrl}`);
+    console.log(`✅ Moonlight launched externally for ${rules.command}`);
     socket.emit("app:stream", {
       instanceId,
       appKey,
-      type: "sunshine",
-      url: sunshineUrl
+      type: "moonlight",
+      external: true,
+      message: `Moonlight Qt launched streaming "${rules.command}". Check your desktop for the Moonlight window.`
     });
-  }, 2000);
+  }, 1500);
 
   proc.on('exit', (code) => {
-    console.log(`Sunshine process exited with code ${code}`);
+    console.log(`Moonlight process exited with code ${code}`);
     nativeSessions.delete(instanceId);
   });
 }

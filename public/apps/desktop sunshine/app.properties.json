@@ -1,6 +1,6 @@
 {
-  "appname": "steam",
-  "appTitle": "Steam (Game Streaming)",
+  "appname": "desktop",
+  "appTitle": "Desktop Streaming",
   "maxInstances": 1,
   "stack": false,
   "resizable": true,
@@ -11,6 +11,6 @@
   "sessionState": false,
   "backend": "native",
   "stream": "sunshine",
-  "command": "Steam",
-  "description": "Launch Steam via Moonlight Qt game streaming. Requires Sunshine server and Moonlight client installed."
+  "command": "Desktop",
+  "description": "Stream your entire desktop via Moonlight Qt. Requires Sunshine server and Moonlight client."
 }

@@ -6,7 +6,7 @@
   "resizable": true,
   "minimize": true,
   "maximize": true,
-  "startPin": false,
+  "startPin": true,
   "addedTaskBar": false,
   "sessionState": false,
   "backend": "native",
