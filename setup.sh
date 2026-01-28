@@ -30,7 +30,9 @@ echo ""
 echo "📦 Installing prerequisites..."
 sudo apt install -y curl wget gnupg2 ca-certificates lsb-release apt-transport-https python3 python3-pip git flatpak
 
-sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+# Setup Flatpak for USER (not system-wide to avoid permission issues)
+echo "📦 Setting up Flatpak for user..."
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
 flatpak --version
 
@@ -117,7 +119,8 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-npm install
+echo "📦 Installing npm packages..."
+npm install --no-bin-links
 echo "✅ npm packages installed"
 
 # ============================================
@@ -126,21 +129,70 @@ echo "✅ npm packages installed"
 echo ""
 echo "📦 Installing Xpra for app streaming..."
 if ! command -v xpra &> /dev/null; then
-    # Install Xpra base package
-    sudo apt install -y xpra
+    # Save current directory
+    ORIGINAL_DIR="$(pwd)"
     
-    # Clone and install xpra-html5
-    cd /tmp
-    if [ -d "xpra-html5" ]; then
-        rm -rf xpra-html5
+    # Add official Xpra repository
+    echo "📥 Adding official Xpra repository..."
+    
+    # Download and add Xpra GPG key
+    wget -O- https://xpra.org/gpg.asc | sudo gpg --dearmor -o /usr/share/keyrings/xpra-archive-keyring.gpg
+    
+    # Detect Debian codename
+    DEBIAN_CODENAME=$(lsb_release -cs)
+    
+    # Add Xpra repository with signed-by keyring
+    echo "deb [signed-by=/usr/share/keyrings/xpra-archive-keyring.gpg] https://xpra.org/ $DEBIAN_CODENAME main" | sudo tee /etc/apt/sources.list.d/xpra.list > /dev/null
+    
+    sudo apt update
+    
+    # Install Xpra and xpra-html5
+    if sudo apt install -y xpra xpra-html5; then
+        echo "✅ Xpra and xpra-html5 installed"
+        
+        # Create systemd user service for Xpra
+        echo "🔧 Setting up Xpra auto-start..."
+        mkdir -p ~/.config/systemd/user
+        
+        cat > ~/.config/systemd/user/xpra.service << 'XPRA_SERVICE'
+[Unit]
+Description=Xpra HTML5 Server for App Streaming
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/xpra start --daemon=no --bind-tcp=0.0.0.0:10000 --html=on --start-child=xterm --exit-with-children=no
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+XPRA_SERVICE
+        
+        # Enable and start Xpra service
+        systemctl --user daemon-reload
+        systemctl --user enable xpra.service
+        systemctl --user start xpra.service
+        
+        # Wait for Xpra to start
+        sleep 3
+        
+        # Check if Xpra is running
+        if systemctl --user is-active --quiet xpra.service; then
+            echo "✅ Xpra service created and started"
+            echo "   HTML5 access: http://localhost:10000"
+            echo "   Apps will stream through browser automatically"
+        else
+            echo "⚠️  Xpra failed to start automatically"
+            echo "   Start manually: systemctl --user start xpra.service"
+        fi
+    else
+        echo "⚠️  Xpra installation failed (optional component)"
+        echo "   Linux app streaming will not be available, but gaming streaming will work"
     fi
-    git clone https://github.com/Xpra-org/xpra-html5
-    cd xpra-html5
-    sudo python3 setup.py install
-    cd "$(dirname "$0")"
     
-    echo "✅ Xpra and xpra-html5 installed"
-    echo "   Usage: xpra start --start=xterm --bind-tcp=0.0.0.0:10000"
+    # Return to original directory
+    cd "$ORIGINAL_DIR"
 else
     echo "✅ Xpra already installed"
 fi
@@ -179,6 +231,13 @@ else
     echo "✅ X server already installed"
 fi
 
+# Always ensure xinit is installed (needed for startx)
+if ! command -v startx &> /dev/null; then
+    echo "📦 Installing xinit..."
+    sudo apt install -y xinit
+    echo "✅ xinit installed"
+fi
+
 # ============================================
 # 7. INSTALL OPENBOX (minimal window manager)
 # ============================================
@@ -199,14 +258,14 @@ echo "📦 Installing Sunshine & Moonlight for game streaming..."
 echo "ℹ️  Sunshine = Server (streams games), Moonlight = Client (receives stream)"
 echo ""
 
-if ! flatpak list 2>/dev/null | grep -q sunshine; then
+if ! flatpak list --user 2>/dev/null | grep -q sunshine; then
     set +e  # Temporarily disable exit on error for optional component
     
-    # Install Sunshine via Flatpak
-    echo "📥 Installing Sunshine via Flatpak..."
-    flatpak install -y flathub dev.lizardbyte.app.Sunshine
+    # Install Sunshine via Flatpak (user install)
+    echo "📥 Installing Sunshine via Flatpak (user install)..."
+    flatpak install --user -y flathub dev.lizardbyte.app.Sunshine
     
-    if flatpak list 2>/dev/null | grep -q sunshine; then
+    if flatpak list --user 2>/dev/null | grep -q sunshine; then
         echo "✅ Sunshine installed"
         echo "   Run with: flatpak run dev.lizardbyte.app.Sunshine"
         echo "   Web UI: http://localhost:47990"
@@ -220,12 +279,65 @@ else
 fi
 
 # Install Moonlight client
-if ! flatpak list 2>/dev/null | grep -q moonlight; then
-    echo "📥 Installing Moonlight via Flatpak..."
-    flatpak install -y flathub com.moonlight_stream.Moonlight
+if ! flatpak list --user 2>/dev/null | grep -q moonlight; then
+    echo "📥 Installing Moonlight via Flatpak (user install)..."
+    flatpak install --user -y flathub com.moonlight_stream.Moonlight
     echo "✅ Moonlight installed (run: flatpak run com.moonlight_stream.Moonlight)"
 else
     echo "✅ Moonlight already installed"
+fi
+
+echo ""
+echo "🎮 Setting up Sunshine auto-start..."
+
+# Create systemd user service for Sunshine
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/sunshine.service << 'SUNSHINE_SERVICE'
+[Unit]
+Description=Sunshine Game Streaming Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/flatpak run dev.lizardbyte.app.Sunshine
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+SUNSHINE_SERVICE
+
+# Enable and start Sunshine service
+systemctl --user daemon-reload
+systemctl --user enable sunshine.service
+systemctl --user start sunshine.service
+
+echo "✅ Sunshine service created and started"
+echo "   Access web UI: http://localhost:47990"
+echo "   Username: admin (set password on first visit)"
+
+# Wait for Sunshine to start
+echo "⏳ Waiting for Sunshine to initialize..."
+sleep 5
+
+# Check if Sunshine is running
+if systemctl --user is-active --quiet sunshine.service; then
+    echo "✅ Sunshine is running"
+    echo ""
+    echo "📝 IMPORTANT: Complete setup in web browser:"
+    echo "   1. Open: http://localhost:47990"
+    echo "   2. Set admin password"
+    echo "   3. Configure apps (Desktop, Steam, etc.)"
+    echo ""
+    echo "🔗 Pair Moonlight:"
+    echo "   1. Open Moonlight: flatpak run com.moonlight_stream.Moonlight"
+    echo "   2. It should auto-detect Sunshine on 127.0.0.1"
+    echo "   3. Enter PIN shown in Moonlight into Sunshine web UI"
+    echo ""
+else
+    echo "⚠️  Sunshine failed to start automatically"
+    echo "   Start manually: systemctl --user start sunshine.service"
 fi
 
 # ============================================
@@ -234,36 +346,80 @@ fi
 echo ""
 echo "📝 Creating kiosk startup script..."
 
-cat > ~/start-kiosk.sh << 'KIOSK_SCRIPT'
+PROJECT_DIR="$(pwd)"
+
+cat > ~/start-kiosk.sh << KIOSK_SCRIPT
 #!/bin/bash
 
+# Set DISPLAY if not set
+if [ -z "\$DISPLAY" ]; then
+    export DISPLAY=:0
+fi
+
+# Check if X server is running
+if ! xset q &>/dev/null; then
+    echo "❌ X server not running!"
+    echo ""
+    echo "You need to start X server first. Options:"
+    echo ""
+    if command -v startx &> /dev/null; then
+        echo "  1. Run: startx"
+        echo "     (from a virtual console, press Ctrl+Alt+F1)"
+    else
+        echo "  1. Install xinit: sudo apt install -y xinit"
+        echo "     Then run: startx"
+    fi
+    echo ""
+    echo "  2. Or run from an existing X session (desktop environment)"
+    echo "  3. Or reboot to let systemd auto-start everything"
+    echo ""
+    exit 1
+fi
+
+# Ensure window manager is running
+if ! pgrep -x openbox > /dev/null; then
+    echo "Starting Openbox window manager..."
+    openbox &
+    sleep 2
+fi
+
+# Disable screen blanking and power management
+xset s off
+xset -dpms
+xset s noblank
+
 # Start the Node.js server in background
-cd "$(dirname "$0")"
+cd "$PROJECT_DIR"
 node server/server.js &
-SERVER_PID=$!
+SERVER_PID=\$!
 
 # Wait for server to start
 echo "Waiting for server to start..."
 sleep 5
 
-# Start Chromium in kiosk mode
-$CHROMIUM_CMD \
-    --kiosk \
-    --noerrdialogs \
-    --disable-infobars \
-    --no-first-run \
-    --check-for-update-interval=31536000 \
-    --disable-session-crashed-bubble \
-    --disable-features=TranslateUI \
-    --start-fullscreen \
+# Start Chromium in kiosk mode with proper input handling
+$CHROMIUM_CMD \\
+    --kiosk \\
+    --noerrdialogs \\
+    --disable-infobars \\
+    --no-first-run \\
+    --check-for-update-interval=31536000 \\
+    --disable-session-crashed-bubble \\
+    --disable-features=TranslateUI \\
+    --start-fullscreen \\
+    --disable-gpu \\
+    --disable-software-rasterizer \\
+    --use-gl=swiftshader \\
+    --enable-features=OverlayScrollbar \\
+    --force-device-scale-factor=1 \\
+    --disable-dev-shm-usage \\
     http://localhost:3000
 
 # Cleanup when browser closes
-kill $SERVER_PID 2>/dev/null
+kill \$SERVER_PID 2>/dev/null
+killall openbox 2>/dev/null
 KIOSK_SCRIPT
 
-# Replace placeholder with actual chromium command
-sed -i "s/\$CHROMIUM_CMD/$CHROMIUM_CMD/g" ~/start-kiosk.sh
 chmod +x ~/start-kiosk.sh
 
 echo "✅ Kiosk script created at ~/start-kiosk.sh"
@@ -370,7 +526,7 @@ echo "=========================================="
 echo ""
 echo "🎮 Everything installed:"
 echo "   ✓ Node.js 20.x and npm"
-echo "   ✓ Xpra (browser-based app streaming)"
+echo "   ✓ Xpra running: http://localhost:10000"
 echo "   ✓ Sunshine (game streaming server)"
 echo "   ✓ Moonlight Qt (game streaming client)"
 echo "   ✓ Chromium (kiosk mode browser)"
@@ -385,10 +541,11 @@ echo "   3. System service: sudo systemctl start frutiger-webos"
 echo ""
 echo "🌐 Access the OS at: http://localhost:3000"
 echo ""
-echo "🎮 Game Streaming Setup:"
-echo "   1. Start Sunshine:  flatpak run dev.lizardbyte.app.Sunshine"
-echo "   2. Configure at:    http://localhost:47990"
-echo "   3. Pair Moonlight:  flatpak run com.moonlight_stream.Moonlight"
+echo "🎮 Game Streaming Status:"
+echo "   ✓ Sunshine running: http://localhost:47990"
+echo "   ✓ Moonlight installed"
+echo "   → Complete pairing in Sunshine web UI (see above)"
+echo "   → Then test gaming apps in the OS!"
 echo ""
 echo "📋 Next Steps:"
 echo "   1. Place FrutigerAeroOS.exe in server/os/"

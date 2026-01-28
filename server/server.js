@@ -406,35 +406,30 @@ function launchApp(appKey, rules, socket) {
 }
 
 function launchXpra(appKey, rules, socket, instanceId) {
-  const display = `:${100 + Math.floor(Math.random() + 100)}`;
-  const cmd = `xpra start ${display} --start-child="${rules.command}" --html=on --bind-tcp=127.0.0.1:0`;
-
-  console.log(`🚀 Launching Xpra: ${cmd}`);
-
-  const proc = exec(cmd, (err, stdout, stderr) => {
-    if (err) {
-      console.error("❌ Xpra launch error:", err);
-      socket.emit("app:error", { appKey, instanceId, error: "Failed to launch Xpra. Is Xpra installed?" });
+  // Check if Xpra service is running
+  exec('systemctl --user is-active xpra.service', (err, stdout) => {
+    const isRunning = stdout.trim() === 'active';
+    
+    if (!isRunning) {
+      console.error(`❌ Xpra service not running`);
+      socket.emit("app:error", { 
+        appKey, 
+        instanceId, 
+        error: "Xpra service not running.\n\nStart it with:\nsystemctl --user start xpra.service" 
+      });
       return;
     }
 
-    // Parse port from stdout
-    const match = stdout.match(/port (\d+)/);
-    if (!match) {
-      console.error("Failed to parse Xpra port");
-      socket.emit("app:error", { appKey, instanceId, error: "Failed to parse Xpra port" });
-      return;
-    }
+    console.log(`✅ Using running Xpra service for ${appKey}`);
 
-    const url = `http://localhost:${match[1]}`;
-    console.log(`✅ Xpra stream ready: ${url}`);
-
+    // Use the HTML5 client from the running Xpra service (port 10000)
+    const url = `http://localhost:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
+    
     nativeSessions.set(instanceId, {
       appKey,
-      pid: proc.pid,
       type: "xpra",
       url,
-      display
+      port: 10000
     });
 
     socket.emit("app:stream", {
@@ -444,70 +439,76 @@ function launchXpra(appKey, rules, socket, instanceId) {
       url
     });
   });
-
-  proc.on('exit', (code) => {
-    console.log(`Xpra process exited with code ${code}`);
-    nativeSessions.delete(instanceId);
-  });
 }
 
 function launchSunshine(appKey, rules, socket, instanceId) {
-  // Sunshine is a game streaming SERVER - we need to launch Moonlight CLIENT
-  // The command in app.properties.json should be the app to stream (e.g., "steam")
-  
-  // First, check if Sunshine server is running (check for flatpak process)
-  exec('pgrep -f "flatpak.*sunshine"', (err, stdout) => {
-    if (err || !stdout.trim()) {
-      // Sunshine not running, start it via flatpak
-      console.log('⚙️ Starting Sunshine server...');
-      exec('flatpak run dev.lizardbyte.app.Sunshine &', (sunErr) => {
-        if (sunErr) {
-          console.error('❌ Failed to start Sunshine:', sunErr);
-        }
-      });
-      
-      // Wait for Sunshine to start
-      setTimeout(() => launchMoonlightClient(appKey, rules, socket, instanceId), 3000);
-    } else {
-      // Sunshine already running
+  // Check if Sunshine service is running
+  exec('systemctl --user is-active sunshine.service', (err, stdout) => {
+    const isRunning = stdout.trim() === 'active';
+    
+    if (isRunning) {
+      console.log('✅ Sunshine service running');
       launchMoonlightClient(appKey, rules, socket, instanceId);
+      return;
     }
+
+    // Try to start Sunshine service
+    console.log('⚙️ Starting Sunshine service...');
+    exec('systemctl --user start sunshine.service', (startErr) => {
+      if (startErr) {
+        console.error('❌ Failed to start Sunshine service:', startErr);
+        socket.emit("app:error", { 
+          appKey, 
+          instanceId, 
+          error: "Failed to start Sunshine.\n\nCheck if installed:\nsystemctl --user status sunshine.service\n\nOr start manually:\nflatpak run dev.lizardbyte.app.Sunshine" 
+        });
+        return;
+      }
+
+      // Wait for Sunshine to initialize
+      setTimeout(() => launchMoonlightClient(appKey, rules, socket, instanceId), 5000);
+    });
   });
 }
 
 function launchMoonlightClient(appKey, rules, socket, instanceId) {
-  // Launch Moonlight Qt to connect to localhost Sunshine server
-  // Moonlight opens in its own window (not embedded in browser)
+  const appName = rules.command || 'Desktop';
   
-  // Check if Moonlight is installed via flatpak
-  exec('flatpak list 2>/dev/null | grep -i moonlight', (flatErr, flatOut) => {
-    if (!flatErr && flatOut.trim()) {
-      // Flatpak version found - this is the recommended method
-      const appName = rules.command || 'Desktop';
-      console.log(`🎮 Launching Moonlight (flatpak) for app: ${appName}`);
-      
-      // Launch Moonlight with DISPLAY set (important for GUI apps)
-      const moonlightCmd = `DISPLAY=${process.env.DISPLAY || ':0'} flatpak run com.moonlight_stream.Moonlight stream localhost "${appName}" &`;
+  // Check for user flatpak Moonlight (recommended installation method)
+  exec('flatpak list --user --app 2>/dev/null | grep com.moonlight_stream.Moonlight', (userErr, userOut) => {
+    if (!userErr && userOut.trim()) {
+      // User flatpak found
+      console.log(`🎮 Launching Moonlight (user flatpak) for: ${appName}`);
+      const moonlightCmd = `DISPLAY=${process.env.DISPLAY || ':0'} flatpak run --user com.moonlight_stream.Moonlight stream localhost "${appName}" &`;
       executeMoonlight(moonlightCmd, appKey, socket, instanceId, rules);
       return;
     }
     
-    // Try native installation
-    exec('which moonlight-qt', (err, nativePath) => {
-      if (!err && nativePath.trim()) {
-        const appName = rules.command || 'Desktop';
-        console.log(`🎮 Launching Moonlight (native) for app: ${appName}`);
-        const moonlightCmd = `moonlight-qt stream localhost "${appName}" &`;
+    // Check for system flatpak
+    exec('flatpak list --system --app 2>/dev/null | grep com.moonlight_stream.Moonlight', (sysErr, sysOut) => {
+      if (!sysErr && sysOut.trim()) {
+        console.log(`🎮 Launching Moonlight (system flatpak) for: ${appName}`);
+        const moonlightCmd = `DISPLAY=${process.env.DISPLAY || ':0'} flatpak run com.moonlight_stream.Moonlight stream localhost "${appName}" &`;
         executeMoonlight(moonlightCmd, appKey, socket, instanceId, rules);
         return;
       }
       
-      // Moonlight not found
-      console.error('❌ Moonlight not found');
-      socket.emit("app:error", { 
-        appKey, 
-        instanceId, 
-        error: "Moonlight Qt not installed.\n\nInstall it with:\nflatpak install flathub com.moonlight_stream.Moonlight\n\nThen pair it with Sunshine at http://localhost:47990" 
+      // Try native installation
+      exec('which moonlight-qt', (nativeErr, nativePath) => {
+        if (!nativeErr && nativePath.trim()) {
+          console.log(`🎮 Launching Moonlight (native) for: ${appName}`);
+          const moonlightCmd = `moonlight-qt stream localhost "${appName}" &`;
+          executeMoonlight(moonlightCmd, appKey, socket, instanceId, rules);
+          return;
+        }
+        
+        // Moonlight not found
+        console.error('❌ Moonlight not found');
+        socket.emit("app:error", { 
+          appKey, 
+          instanceId, 
+          error: "Moonlight Qt not installed.\n\nInstall with:\nflatpak install --user flathub com.moonlight_stream.Moonlight\n\nThen pair with Sunshine at:\nhttp://localhost:47990" 
+        });
       });
     });
   });
