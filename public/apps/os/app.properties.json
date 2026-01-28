@@ -1,4 +1,6 @@
 {
+  "appname": "os",
+  "appTitle": "Download OS",
   "maxInstances": -1,
   "stack": false,
   "resizable": false,

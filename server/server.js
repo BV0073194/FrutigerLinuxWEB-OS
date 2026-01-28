@@ -100,13 +100,13 @@ app.get("/api/apps", (req, res) => {
 
   const apps = fs.readdirSync(APPS_DIR)
     .filter(name => fs.statSync(path.join(APPS_DIR, name)).isDirectory())
-    .map(name => {
-      const propsPath = path.join(APPS_DIR, name, "app.properties.json");
+    .map(folderName => {
+      const propsPath = path.join(APPS_DIR, folderName, "app.properties.json");
       const rules = fs.existsSync(propsPath)
         ? { ...DEFAULT_RULES, ...readJSON(propsPath, {}) }
         : DEFAULT_RULES;
 
-      return { name, rules };
+      return { folderName, rules };
     });
 
   res.json(apps);

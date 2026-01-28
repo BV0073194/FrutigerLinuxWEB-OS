@@ -1,4 +1,6 @@
 {
+  "appname": "software",
+  "appTitle": "Software Center",
   "maxInstances": -1,
   "stack": true,
   "resizable": false,

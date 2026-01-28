@@ -1,4 +1,6 @@
 {
+  "appname": "notepad",
+  "appTitle": "Notepad",
   "maxInstances": -1,
   "stack": false,
   "resizable": true,

@@ -1,4 +1,6 @@
 {
+  "appname": "notepad-debug",
+  "appTitle": "Notepad : Debug Channel",
   "maxInstances": -1,
   "stack": false,
   "resizable": true,

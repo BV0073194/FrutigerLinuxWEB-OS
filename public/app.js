@@ -247,22 +247,33 @@ var appRules = {};
 // ==========================
 // COMMUNITY APPS LOADER ✅
 // ==========================
+const appFolderMap = {}; // Maps appname -> folder name
+
 async function loadCommunityApps() {
   try {
     const res = await fetch("/api/apps");
     const apps = await res.json();
 
     for (const app of apps) {
-      appRules[app.name] = app.rules;
+      const appName = app.rules.appname || app.folderName; // Use appname from properties or fallback to folder
+      const appTitle = app.rules.appTitle || appName; // Use appTitle or fallback to appname
+      
+      // Map appname to folder for file loading
+      appFolderMap[appName] = app.folderName;
+      
+      // Store rules under appname
+      appRules[appName] = app.rules;
+      appRules[appName].folderName = app.folderName;
+      appRules[appName].appTitle = appTitle;
 
       // icon detection
       try {
-        const html = await (await fetch(`/apps/${app.name}/index.html`)).text();
+        const html = await (await fetch(`/apps/${encodeURIComponent(app.folderName)}/index.html`)).text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         const ico = doc.querySelector("appico")?.getAttribute("src");
-        appRules[app.name].icon = ico || `/apps/${app.name}/icon.png`;
+        appRules[appName].icon = ico || `/apps/${encodeURIComponent(app.folderName)}/icon.png`;
       } catch {
-        appRules[app.name].icon = `/apps/${app.name}/icon.png`;
+        appRules[appName].icon = `/apps/${encodeURIComponent(app.folderName)}/icon.png`;
       }
 
       // AUTO PIN
@@ -270,26 +281,26 @@ async function loadCommunityApps() {
       whenDomReady(() => {
         // Start menu pin
         if (app.rules.startPin === true) {
-          createStartMenuPin(app.name, appRules[app.name].icon);
+          createStartMenuPin(appName, appRules[appName].icon);
         }
 
         // Taskbar pin
         if (app.rules.addedTaskBar === true) {
-          createTaskbarPin(app.name, appRules[app.name].icon);
+          createTaskbarPin(appName, appRules[appName].icon);
         }
       });
 
       // existing start menu logic untouched
       if (app.rules.startPin) {
-        if (!document.querySelector(`.start-menu-grid [data-app="${app.name}"]`)) {
+        if (!document.querySelector(`.start-menu-grid [data-app="${appName}"]`)) {
           const tile = document.createElement("button");
           tile.className = "start-tile";
-          tile.dataset.app = app.name;
+          tile.dataset.app = appName;
           tile.innerHTML = `
             <div class="tile-icon">
-              <img src="${appRules[app.name].icon}" class="app-icon">
+              <img src="${appRules[appName].icon}" class="app-icon">
             </div>
-            <div class="tile-title">${app.name}</div>
+            <div class="tile-title">${appTitle}</div>
           `;
           document.querySelector(".start-menu-grid").appendChild(tile);
         }
@@ -364,7 +375,14 @@ const menuTimers = {}; // <-- PER-APP TIMER
 let activeStackApp = null; // prevents hover flicker
 
 async function getAppRules(appKey) {
-  const appPath = "/apps/" + appKey + "/app.properties.json";
+  // If already cached, return it
+  if (appRules[appKey]) {
+    return appRules[appKey];
+  }
+  
+  // Get folder name from mapping
+  const folderName = appFolderMap[appKey] || appKey;
+  const appPath = "/apps/" + encodeURIComponent(folderName) + "/app.properties.json";
   console.log("Fetching app rules from:", appPath);
   try {
     const res = await fetch(appPath);
@@ -372,25 +390,24 @@ async function getAppRules(appKey) {
     const rules = await res.json();
     console.log("Fetched app rules:", rules);
     appRules[appKey] = rules;
+    appRules[appKey].folderName = folderName;
+    appRules[appKey].appTitle = rules.appTitle || appKey;
     return rules;
   } catch (error) {
     console.error(`Failed to fetch app rules: ${appPath}`, error);
-    // If fetch failed, use cached from API or default
-    if (appRules[appKey]) {
-      console.log("Using cached app rules:", appRules[appKey], "for app:", appKey);
-      return appRules[appKey];
-    } else {
-      const defaultRules = {
-        maxInstances: 1,
-        stack: false,
-        resizable: true,
-        minimize: true,
-        maximize: true,
-        startPin: false
-      };
-      appRules[appKey] = defaultRules;
-      return defaultRules;
-    }
+    // Return default rules
+    const defaultRules = {
+      maxInstances: 1,
+      stack: false,
+      resizable: true,
+      minimize: true,
+      maximize: true,
+      startPin: false,
+      folderName: folderName,
+      appTitle: appKey
+    };
+    appRules[appKey] = defaultRules;
+    return defaultRules;
   }
 }
 
@@ -496,8 +513,10 @@ function setupSessionState(win, body) {
 }
 
 async function openApp(appKey, isRestoring = false, sessionState = null) {
-  const appPath = "/apps/" + appKey;
   const rules = await getAppRules(appKey);
+  const folderName = rules.folderName || appFolderMap[appKey] || appKey;
+  const appTitle = rules.appTitle || appKey;
+  const appPath = "/apps/" + encodeURIComponent(folderName);
 
   appInstances[appKey] = appInstances[appKey] || [];
   const instances = appInstances[appKey];
@@ -517,6 +536,7 @@ async function openApp(appKey, isRestoring = false, sessionState = null) {
 
   win.dataset.app = appPath;
   win.dataset.appKey = appKey;
+  win.dataset.folderName = folderName;
   win.dataset.resizable = rules.resizable;
   win.dataset.minimize = rules.minimize;
   win.dataset.maximize = rules.maximize;
@@ -524,7 +544,7 @@ async function openApp(appKey, isRestoring = false, sessionState = null) {
 
   win.innerHTML = `
     <div class="window-header">
-      <div class="window-title">${appKey.toUpperCase()}</div>
+      <div class="window-title">${appTitle}</div>
       <div class="window-controls">
         <button class="win-btn" data-action="minimize">▁</button>
         <button class="win-btn" data-action="maximize">▢</button>
@@ -572,7 +592,7 @@ async function openApp(appKey, isRestoring = false, sessionState = null) {
         
         // Load CSS and JS files
         if (!loadedModules[appPath]) {
-          return fetch(`/api/apps/${appKey}/files`)
+          return fetch(`/api/apps/${encodeURIComponent(folderName)}/files`)
             .then(r => r.json())
             .then(files => {
               // Load CSS files scoped to this window
@@ -658,7 +678,7 @@ async function openApp(appKey, isRestoring = false, sessionState = null) {
           const modules = loadedModules[appPath];
           
           // Re-inject CSS for this instance
-          fetch(`/api/apps/${appKey}/files`)
+          fetch(`/api/apps/${encodeURIComponent(folderName)}/files`)
             .then(r => r.json())
             .then(files => {
               files.css.forEach(cssFile => {
