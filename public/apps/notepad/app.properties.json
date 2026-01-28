@@ -1,13 +1,13 @@
 {
   "maxInstances": -1,
-  "stack": true,
-  "resizable": false,
+  "stack": false,
+  "resizable": true,
   "minimize": true,
   "maximize": true,
   "startPin": false,
-  "addedTaskBar": false,
+  "addedTaskBar": true,
   "sessionState": true,
-  "backend": "web", 
+  "backend": "web",
   "command": null,
   "stream": null
 }

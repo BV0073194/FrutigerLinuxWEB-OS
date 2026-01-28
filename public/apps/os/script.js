@@ -1,5 +1,4 @@
-export function init() {
-  document.getElementById("downloadOsBtn").addEventListener("click", async () => {
+async function downloadOS(caller) {
     const res = await fetch("/download/os");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -10,6 +9,8 @@ export function init() {
     a.click();
 
     URL.revokeObjectURL(url);
-    document.getElementById("osStatus").textContent = "Downloaded!";
-  });
+    caller.getRootNode().getElementById("osStatus").textContent = "Downloaded!";
+    setTimeout(() => {
+        caller.getRootNode().getElementById("osStatus").textContent = "Ready";
+    }, 3000);
 }

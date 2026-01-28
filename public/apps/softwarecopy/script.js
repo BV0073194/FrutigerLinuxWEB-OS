@@ -68,10 +68,39 @@ export { softwareApp };
 
 // ==========================================
 // SESSION STATE API IMPLEMENTATION
-// Note: These functions are called per-window instance,
-// but they need to find elements in the correct window context.
-// The parent will call win._getAppSessionState() which wraps these.
 // ==========================================
 
-// This will be overridden per-window by setupSessionState
-// Just keeping these as fallback/documentation
+// Save state function
+window.getAppSessionState = function() {
+  const searchInput = document.getElementById('searchInput');
+  const grid = document.getElementById('softwareGrid');
+  
+  return {
+    searchQuery: searchInput?.value || '',
+    scrollPosition: window.scrollY
+  };
+};
+
+// Restore state function
+window.restoreAppSessionState = function(state) {
+  if (!state) return;
+  
+  console.log('📂 Restoring software app state...', state);
+  
+  // Restore search query
+  if (state.searchQuery) {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.value = state.searchQuery;
+      // Trigger input event to filter the list
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+  
+  // Restore scroll position
+  if (state.scrollPosition !== undefined) {
+    setTimeout(() => {
+      window.scrollTo(0, state.scrollPosition);
+    }, 100);
+  }
+};

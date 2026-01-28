@@ -6,11 +6,28 @@ const startMenu = document.getElementById("startMenu");
 const closeStart = document.getElementById("closeStart");
 const windowContainer = document.getElementById("windowContainer");
 const clock = document.getElementById("clock");
-
+const startPin = document.querySelector(".start-menu-grid");
 const taskbarIcons = document.querySelector(".taskbar-icons");
 
 let zIndexCounter = 1;
 var loadedModules = {};
+let isRestoringState = false; // Flag to prevent saves during restoration
+let lastSaveTime = 0; // Track last save to prevent spam
+let restorationPromise = null; // Track ongoing restoration
+
+let domReady = false;
+const domReadyQueue = [];
+
+document.addEventListener("DOMContentLoaded", () => {
+  domReady = true;
+  domReadyQueue.forEach(fn => fn());
+  domReadyQueue.length = 0;
+});
+
+function whenDomReady(fn) {
+  domReady ? fn() : domReadyQueue.push(fn);
+}
+
 
 // ==========================
 // SOCKET.IO
@@ -29,10 +46,8 @@ socket.on("uac:required", ({ command, risks }) => {
 // ==========================
 // PINNED LAUNCHER HELPER ✅
 // ==========================
-function createPinnedLauncher(appName, iconSrc) {
-  // prevent duplicates
-  if (taskbarIcons.querySelector(`[data-app="${appName}"]`)) return;
-
+function createStartMenuPin(appName, iconSrc) {
+  if (startPin.querySelector(`[data-app="${appName}"]`)) return;
   const btn = document.createElement("button");
   btn.className = "task-icon launcher";
   btn.dataset.app = appName;
@@ -46,17 +61,59 @@ function createPinnedLauncher(appName, iconSrc) {
          onload="validateIconSize(this)">
   `;
 
+  startPin.appendChild(btn);
+}
+
+function createTaskbarPin(appKey, iconSrc) {
+  if (taskbarIcons.querySelector(`[data-app="${appKey}"]`)) return;
+  const btn = document.createElement("button");
+  btn.className = "task-icon launcher";
+  btn.dataset.app = appKey;
+  btn.title = appKey;
+
+  btn.innerHTML = `
+    <img src="${iconSrc}"
+         alt="${appKey}"
+         class="app-icon"
+         style="width:100%;height:100%;object-fit:contain;"
+         onload="validateIconSize(this)">
+  `;
+
   taskbarIcons.appendChild(btn);
 }
 
 // ==========================
 // STATE SAVE / LOAD
 // ==========================
-async function saveDesktopState() {
+function saveDesktopState(useBeacon = false) {
+  // Don't save during restoration
+  if (isRestoringState) {
+    console.log('⏸️ saveDesktopState: Skipped (restoration in progress)');
+    return;
+  }
+  
+  // Prevent saves more frequent than 100ms (debounce rapid calls)
+  const now = Date.now();
+  if (!useBeacon && now - lastSaveTime < 100) {
+    console.log('⏸️ saveDesktopState: Skipped (too soon after last save)');
+    return;
+  }
+  lastSaveTime = now;
+  
   const windows = [];
-  document.querySelectorAll('.window').forEach(win => {
-    windows.push({
-      appKey: win.dataset.appKey,
+  
+  const allWindows = document.querySelectorAll('.window');
+  console.log('💾 saveDesktopState: Found', allWindows.length, 'windows in DOM');
+  
+  allWindows.forEach((win, index) => {
+    const appKey = win.dataset.appKey;
+    const instanceId = win.dataset.instanceId;
+    console.log(`  - Window ${index + 1}: ${appKey} (${instanceId?.slice(0,8)})`);
+    
+    const rules = appRules[appKey] || {};
+    const windowData = {
+      appKey: appKey,
+      instanceId: instanceId,
       top: win.style.top,
       left: win.style.left,
       width: win.style.width,
@@ -65,46 +122,140 @@ async function saveDesktopState() {
       maximized: win.classList.contains('maximized'),
       zIndex: parseInt(win.style.zIndex) || 1,
       preview: win.dataset.minimized === 'true' ? win.storedPreview : null
-    });
+    };
+    
+    // Get session state if app supports it
+    if (rules.sessionState && win._getAppSessionState) {
+      try {
+        const sessionState = win._getAppSessionState();
+        console.log(`    Session state:`, sessionState);
+        windowData.sessionState = sessionState;
+      } catch (e) {
+        console.warn('Failed to get session state for', appKey, e);
+      }
+    } else if (rules.sessionState) {
+      console.warn(`    App ${appKey} has sessionState enabled but no _getAppSessionState function`);
+    }
+    
+    windows.push(windowData);
   });
 
-  try {
-    await fetch('/api/save-state', {
+  console.log('💾 saveDesktopState: Saving', windows.length, 'windows:', windows.map(w => w.appKey + ':' + (w.instanceId?.slice(0,8) || 'no-id')).join(', '));
+  
+  const payload = JSON.stringify({ windows, zIndexCounter });
+  
+  if (useBeacon) {
+    // Use sendBeacon for synchronous save during page unload
+    navigator.sendBeacon('/api/save-state', new Blob([payload], { type: 'application/json' }));
+    console.log('💾 saveDesktopState: Used sendBeacon (synchronous)');
+  } else {
+    // Use regular fetch for async saves
+    fetch('/api/save-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ windows, zIndexCounter })
-    });
-  } catch {}
+      body: payload
+    }).catch(err => console.error('Failed to save state:', err));
+  }
 }
 
 async function loadDesktopState() {
-  try {
-    const res = await fetch('/api/load-state');
-    const state = await res.json();
-    zIndexCounter = state.zIndexCounter || 1;
-
-    for (const winState of state.windows) {
-      await openApp(winState.appKey);
-      const win = appInstances[winState.appKey]?.at(-1);
-      if (!win) continue;
-
-      Object.assign(win.style, {
-        top: winState.top,
-        left: winState.left,
-        width: winState.width,
-        height: winState.height,
-        zIndex: winState.zIndex
-      });
-
-      win.dataset.minimized = winState.minimized ? "true" : "false";
-      if (winState.minimized) {
-        win.style.display = "none";
-        win.storedPreview = winState.preview;
+  // Set restoration flag IMMEDIATELY to block any pending saves
+  if (isRestoringState) {
+    console.log('⏸️ Restoration already in progress, skipping');
+    return;
+  }
+  isRestoringState = true;
+  
+  // If restoration is already in progress, wait for it to complete
+  if (restorationPromise) {
+    console.log('⏸️ Restoration promise exists, waiting...');
+    await restorationPromise;
+    console.log('✅ Previous restoration completed');
+    isRestoringState = false;
+    return;
+  }
+  
+  // Create promise for this restoration
+  restorationPromise = (async () => {
+    try {
+      console.log('📂 loadDesktopState: Starting...');
+      
+      // Clear any pending save timers
+      clearTimeout(saveDebounceTimer);
+      console.log('🧹 Cleared pending save timers');
+      
+      const res = await fetch('/api/load-state');
+      if (!res.ok) {
+        console.warn('Failed to fetch state:', res.status);
+        return;
       }
-      if (winState.maximized) win.classList.add("maximized");
-      updateTaskbarIndicator(winState.appKey);
+      const state = await res.json();
+      console.log('📂 loadDesktopState: Loaded', state.windows?.length || 0, 'windows from server');
+      
+      if (!state.windows || state.windows.length === 0) {
+        console.log('📂 No windows to restore');
+        return;
+      }
+      
+      zIndexCounter = state.zIndexCounter || 1;
+      
+      // Clear any existing windows to prevent duplicates from rapid refreshes
+      document.querySelectorAll('.window').forEach(win => {
+        win.remove();
+      });
+      // Clear instance tracking
+      Object.keys(appInstances).forEach(key => {
+        appInstances[key] = [];
+      });
+      console.log('🧹 Cleared existing windows');
+
+      for (const winState of state.windows) {
+        console.log('📂 Restoring window:', winState.appKey, 'ID:', winState.instanceId?.slice(0, 8));
+        
+        try {
+          await openApp(winState.appKey, true, winState.sessionState); // pass restore flag and session state
+          
+          // Wait a bit for the window to be fully created
+          await new Promise(resolve => setTimeout(resolve, 150));
+      
+        const win = appInstances[winState.appKey]?.at(-1);
+        if (!win) {
+          console.warn('Failed to restore window for app:', winState.appKey);
+          continue;
+        }
+
+        // Restore window properties
+        Object.assign(win.style, {
+          top: winState.top,
+          left: winState.left,
+          width: winState.width,
+          height: winState.height,
+          zIndex: winState.zIndex
+        });
+
+        win.dataset.minimized = winState.minimized ? "true" : "false";
+        if (winState.minimized) {
+          win.style.display = "none";
+          win.storedPreview = winState.preview;
+        }
+        if (winState.maximized) win.classList.add("maximized");
+        updateTaskbarIndicator(winState.appKey);
+      } catch (err) {
+        console.error('Error restoring window:', winState.appKey, err);
+      }
     }
-  } catch {}
+    
+    console.log('✅ loadDesktopState: Complete - restored', state.windows?.length || 0, 'windows');
+  } catch (err) {
+    console.error('Failed to load desktop state:', err);
+  } finally {
+    isRestoringState = false; // Re-enable saves
+    restorationPromise = null; // Clear restoration lock
+    console.log('🔓 State restoration complete - saves enabled');
+  }
+  })();
+  
+  return restorationPromise;
 }
 
 // ==========================
@@ -133,13 +284,22 @@ async function loadCommunityApps() {
         appRules[app.name].icon = `/apps/${app.name}/icon.png`;
       }
 
-      // ✅ AUTO PIN TO TASKBAR (NEW)
-      if (app.rules.addToTaskbar === true) {
-        createPinnedLauncher(app.name, appRules[app.name].icon);
-      }
+      // AUTO PIN
+      // Start menu pin
+      whenDomReady(() => {
+        // Start menu pin
+        if (app.rules.startPin === true) {
+          createStartMenuPin(app.name, appRules[app.name].icon);
+        }
+
+        // Taskbar pin
+        if (app.rules.addedTaskBar === true) {
+          createTaskbarPin(app.name, appRules[app.name].icon);
+        }
+      });
 
       // existing start menu logic untouched
-      if (app.rules.taskbarIcon) {
+      if (app.rules.startPin) {
         if (!document.querySelector(`.start-menu-grid [data-app="${app.name}"]`)) {
           const tile = document.createElement("button");
           tile.className = "start-tile";
@@ -160,13 +320,46 @@ async function loadCommunityApps() {
 }
 
 // boot
-loadCommunityApps().then(loadDesktopState);
+loadCommunityApps().then(() => {
+  // Wait for DOM to be fully ready before restoring state
+  // This ensures all launchers/pins are created first
+  whenDomReady(() => {
+    // Small delay to ensure all dynamic content is rendered
+    setTimeout(() => {
+      loadDesktopState();
+    }, 100);
+  });
+});
 
 // Periodic save every 30 seconds
-setInterval(saveDesktopState, 30000);
+setInterval(() => saveDesktopState(false), 30000);
 
-// Save on unload
-window.addEventListener('beforeunload', saveDesktopState);
+// Debounced save on input changes
+let saveDebounceTimer = null;
+function debouncedSave() {
+  clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(() => {
+    if (!isRestoringState) {
+      console.log('⏱️ Debounced save triggered');
+      saveDesktopState(false);
+    }
+  }, 1000); // Save 1 second after last input change
+}
+
+// Listen for input changes in any window to trigger save
+document.addEventListener('input', (e) => {
+  if (e.target.closest('.window-body')) {
+    debouncedSave();
+  }
+}, true);
+
+// Save when window loses focus (but not on visibility change during page load)
+window.addEventListener('blur', () => {
+  if (!isRestoringState && document.querySelectorAll('.window').length > 0) {
+    console.log('👁️ Window blurred - saving state');
+    saveDesktopState(false);
+  }
+});
 
 // ==========================
 // START MENU
@@ -214,7 +407,7 @@ async function getAppRules(appKey) {
         resizable: true,
         minimize: true,
         maximize: true,
-        taskbarIcon: false
+        startPin: false
       };
       appRules[appKey] = defaultRules;
       return defaultRules;
@@ -222,15 +415,124 @@ async function getAppRules(appKey) {
   }
 }
 
-async function openApp(appKey) {
+// Session state helper function
+function setupSessionState(win, body) {
+  // Auto-capture function: saves DOM state automatically
+  win._getAppSessionState = () => {
+    // First check if app has custom save function (removed - use automatic only)
+    
+    // Auto-capture common state
+    const state = {
+      inputs: {},
+      scrollPosition: { x: body.scrollLeft || 0, y: body.scrollTop || 0 }
+    };
+    
+    console.log('📦 Auto-capturing state for', win.dataset.appKey);
+    
+    // Capture all form inputs
+    body.querySelectorAll('input, textarea, select').forEach(element => {
+      if (element.id || element.name) {
+        const key = element.id || element.name;
+        
+        if (element.type === 'checkbox' || element.type === 'radio') {
+          state.inputs[key] = {
+            type: element.type,
+            checked: element.checked,
+            value: element.value
+          };
+        } else if (element.tagName === 'SELECT') {
+          state.inputs[key] = {
+            type: 'select',
+            selectedIndex: element.selectedIndex,
+            value: element.value
+          };
+        } else {
+          state.inputs[key] = {
+            type: element.type || 'text',
+            value: element.value
+          };
+        }
+      }
+    });
+    
+    // Capture contenteditable elements
+    body.querySelectorAll('[contenteditable="true"]').forEach((element, index) => {
+      if (element.id) {
+        state.inputs[element.id] = {
+          type: 'contenteditable',
+          html: element.innerHTML
+        };
+      } else {
+        state.inputs[`contenteditable_${index}`] = {
+          type: 'contenteditable',
+          html: element.innerHTML
+        };
+      }
+    });
+    
+    console.log('📦 Auto-captured state:', state);
+    return state;
+  };
+  
+  // Auto-restore function: restores DOM state automatically
+  win._restoreAppSessionState = (state) => {
+    if (!state) return;
+    
+    console.log('📦 Auto-restoring state for', win.dataset.appKey, state);
+    
+    // Auto-restore common state
+    setTimeout(() => {
+      // Restore form inputs
+      if (state.inputs) {
+        Object.keys(state.inputs).forEach(key => {
+          const element = body.querySelector(`#${key}, [name="${key}"]`);
+          if (!element) {
+            console.warn(`Could not find element for key: ${key}`);
+            return;
+          }
+          
+          const inputState = state.inputs[key];
+          
+          if (inputState.type === 'checkbox' || inputState.type === 'radio') {
+            element.checked = inputState.checked;
+          } else if (inputState.type === 'select') {
+            element.selectedIndex = inputState.selectedIndex;
+            element.value = inputState.value;
+          } else if (inputState.type === 'contenteditable') {
+            element.innerHTML = inputState.html;
+          } else {
+            element.value = inputState.value;
+          }
+          
+          console.log(`Restored ${key}:`, inputState.value || inputState.checked);
+          
+          // Trigger input event for search boxes and reactive fields
+          if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        });
+      }
+      
+      // Restore scroll position within the window body
+      if (state.scrollPosition) {
+        body.scrollLeft = state.scrollPosition.x || 0;
+        body.scrollTop = state.scrollPosition.y || 0;
+      }
+    }, 150);
+  };
+  
+  // Don't auto-restore here - it will be done after app initialization
+}
+
+async function openApp(appKey, isRestoring = false, sessionState = null) {
   const appPath = "/apps/" + appKey;
   const rules = await getAppRules(appKey);
 
   appInstances[appKey] = appInstances[appKey] || [];
   const instances = appInstances[appKey];
 
-  // enforce max instances (unless -1)
-  if (rules.maxInstances !== -1 && instances.length >= rules.maxInstances) {
+  // enforce max instances (unless -1 or we're restoring from saved state)
+  if (!isRestoring && rules.maxInstances !== -1 && instances.length >= rules.maxInstances) {
     const winToFocus = instances[0];
     focusWindow(winToFocus);
     return;
@@ -266,51 +568,109 @@ async function openApp(appKey) {
   windowContainer.appendChild(win);
   instances.push(win);
 
+  const instanceId = crypto.randomUUID();
+  win.dataset.instanceId = instanceId;
+  
+  // Store session state for restoration
+  if (sessionState) {
+    win._pendingSessionState = sessionState;
+  }
+
   // bring to front
   win.addEventListener("mousedown", () => {
     win.style.zIndex = ++zIndexCounter;
   });
 
-  // load app content into window body
-  fetch(`${appPath}/index.html`)
-    .then((r) => r.text())
-    .then((html) => {
-      win.querySelector(".window-body").innerHTML = html;
-      if (!loadedModules[appPath]) {
-        return fetch(`/api/apps/${appKey}`)
-          .then(r => r.json())
-          .then(jsFiles => {
-            const loadPromises = jsFiles.map(file => import(`${appPath}/${file}`));
-            return Promise.all(loadPromises);
-          })
-          .then(modules => {
-            loadedModules[appPath] = modules;
-            // Call init for known apps
-            const softwareModule = modules.find(m => m.softwareApp);
-            if (softwareModule) {
-              softwareModule.softwareApp.init(win.querySelector(".window-body"));
+  // ==============================
+  // LOAD APP CONTENT (WEB vs NATIVE)
+  // ==============================
+
+  if (rules.backend !== "native") {
+
+    // 🔒 WEB APP LOADER
+    fetch(`${appPath}/index.html`)
+      .then((r) => r.text())
+      .then((html) => {
+        const body = win.querySelector(".window-body");
+        body.innerHTML = html;
+        
+        // Load JS modules
+        if (!loadedModules[appPath]) {
+          return fetch(`/api/apps/${appKey}`)
+            .then(r => r.json())
+            .then(jsFiles => {
+              const loadPromises = jsFiles.map(file => import(`${appPath}/${file}`));
+              return Promise.all(loadPromises);
+            })
+            .then(modules => {
+              loadedModules[appPath] = modules;
+              const softwareModule = modules.find(m => m.softwareApp);
+              if (softwareModule) {
+                softwareModule.softwareApp.init(win.querySelector(".window-body"));
+              }
+              const osModule = modules.find(m => m.init);
+              if (osModule) {
+                osModule.init();
+              }
+              
+              // Setup session state wrapper for this window
+              if (rules.sessionState) {
+                setupSessionState(win, body);
+                
+                // Restore session state AFTER app is fully initialized
+                if (win._pendingSessionState) {
+                  console.log('⏳ Waiting for app to initialize before restoring state...');
+                  setTimeout(() => {
+                    if (win._restoreAppSessionState) {
+                      console.log('✅ App initialized, restoring session state now');
+                      win._restoreAppSessionState(win._pendingSessionState);
+                      delete win._pendingSessionState;
+                    }
+                  }, 300); // Wait 300ms for app to fully initialize
+                }
+              }
+            })
+            .catch(err => console.error('Failed to load JS modules:', err));
+        } else {
+          const softwareModule = loadedModules[appPath].find(m => m.softwareApp);
+          if (softwareModule) {
+            softwareModule.softwareApp.init(win.querySelector(".window-body"));
+          }
+          const osModule = loadedModules[appPath].find(m => m.init);
+          if (osModule) {
+            osModule.init();
+          }
+          
+          // Setup session state wrapper for this window
+          if (rules.sessionState) {
+            setupSessionState(win, body);
+            
+            // Restore session state AFTER app is fully initialized
+            if (win._pendingSessionState) {
+              console.log('⏳ Waiting for app to initialize before restoring state...');
+              setTimeout(() => {
+                if (win._restoreAppSessionState) {
+                  console.log('✅ App initialized, restoring session state now');
+                  win._restoreAppSessionState(win._pendingSessionState);
+                  delete win._pendingSessionState;
+                }
+              }, 300); // Wait 300ms for app to fully initialize
             }
-            const osModule = modules.find(m => m.init);
-            if (osModule) {
-              osModule.init();
-            }
-          })
-          .catch(err => console.error('Failed to load JS modules:', err));
-      } else {
-        // Already loaded, call init
-        const softwareModule = loadedModules[appPath].find(m => m.softwareApp);
-        if (softwareModule) {
-          softwareModule.softwareApp.init(win.querySelector(".window-body"));
+          }
         }
-        const osModule = loadedModules[appPath].find(m => m.init);
-        if (osModule) {
-          osModule.init();
-        }
-      }
-    })
-    .catch(() => {
-      win.querySelector(".window-body").innerHTML = `<div class="aero-card"><p>Failed to load app.</p></div>`;
-    });
+      })
+      .catch(() => {
+        win.querySelector(".window-body").innerHTML =
+          `<div class="aero-card"><p>Failed to load app.</p></div>`;
+      });
+
+  } else {
+
+    // 🧠 NATIVE / STREAMED APP
+    attachNativeApp(win, rules);
+
+  }
+
 
   // window controls
   win.querySelector("[data-action='close']").addEventListener("click", () => {
@@ -336,14 +696,6 @@ async function openApp(appKey) {
   }
 
   makeDraggable(win);
-
- // Use launcher as indicator ONLY if stackable
- console.log("App rules for", appKey, ":", rules);
- console.log("Launcher element:", document.querySelector(`[data-app="${appKey}"]`));
-  const launcher = document.querySelector(`[data-app="${appKey}"]`);
-  console.log("Launcher found:", launcher);
-  console.log("Stack rule:", rules.stack);  
-  console.log("Taskbar Icon rule:", rules.taskbarIcon);
 
   // For non-stacking apps, create individual taskbar icon
   if (!rules.stack) {
@@ -377,6 +729,8 @@ async function openApp(appKey) {
     win.taskbarIcon = icon;
   }
 
+  // Get launcher button for stacking apps
+  const launcher = document.querySelector(`[data-app="${appKey}"]`);
   if (launcher && rules.stack) {
     if (!launcher.querySelector(".taskbar-indicator")) {
       const bar = document.createElement("div");
@@ -386,6 +740,11 @@ async function openApp(appKey) {
   }
 
   updateTaskbarIndicator(appKey);
+  
+  // Save state after opening a window (unless restoring)
+  if (!isRestoringState) {
+    saveDesktopState();
+  }
 }
 
 function focusWindow(win) {
@@ -410,9 +769,21 @@ function closeWindow(win) {
   }
   win.remove();
   updateTaskbarIndicator(appKey);
+  
+  // Save state after closing a window (unless restoring)
+  if (!isRestoringState) {
+    saveDesktopState();
+  }
+  
   const appPath = win.dataset.app;
   if (loadedModules[appPath]) {
     delete loadedModules[appPath];
+  }
+  const rules = appRules[win.dataset.appKey];
+  if (rules?.backend === "native") {
+    socket.emit("native:kill", {
+      instanceId: win.dataset.instanceId
+    });
   }
 }
 
@@ -425,6 +796,11 @@ function minimizeWindow(win) {
   win.minimizedAt = Date.now(); // track minimization time
   win.style.display = "none";
   updateTaskbarIndicator(win.dataset.appKey);
+  
+  // Save state after minimizing
+  if (!isRestoringState) {
+    saveDesktopState();
+  }
 }
 
 function updateTaskbarIndicator(appKey) {
@@ -620,6 +996,11 @@ function maximizeWindow(win) {
     win.style.width = "100%";
     win.style.height = "calc(100% - 54px)";
   }
+  
+  // Save state after maximize/restore
+  if (!isRestoringState) {
+    saveDesktopState();
+  }
 }
 
 function makeDraggable(win) {
@@ -641,8 +1022,14 @@ function makeDraggable(win) {
   });
 
   document.addEventListener("mouseup", () => {
-    dragging = false;
-    header.style.cursor = "grab";
+    if (dragging) {
+      dragging = false;
+      header.style.cursor = "grab";
+      // Save state after moving window
+      if (!isRestoringState) {
+        saveDesktopState();
+      }
+    }
   });
 }
 
@@ -732,8 +1119,14 @@ function makeResizable(win) {
   });
 
   document.addEventListener("mouseup", () => {
-    resizing = false;
-    resizeMode = '';
+    if (resizing) {
+      resizing = false;
+      resizeMode = '';
+      // Save state after resizing window
+      if (!isRestoringState) {
+        saveDesktopState();
+      }
+    }
   });
 }
 
@@ -746,48 +1139,49 @@ setInterval(() => {
   clock.textContent = `${hours}:${mins}`;
 }, 1000);
 
-// DOUBLE CLICK LAUNCHER SETUP
-document.querySelectorAll(".task-icon[data-app], .start-tile[data-app]").forEach((btn) => {
-  let clickCount = 0;
-  let timer = null;
+document.addEventListener("click", (e) => {
+  if (!e.target || !e.target.closest) return;
+  const btn = e.target.closest(".task-icon[data-app], .start-tile[data-app]");
+  if (!btn) return;
 
-  btn.addEventListener("click", () => {
-    // 🛑 block app-content clicks
-    if (btn.closest(".window")) return;
+  // 🛑 block app-content clicks
+  if (btn.closest(".window")) return;
 
-    clickCount++;
+  let clickCount = btn._clickCount || 0;
+  clearTimeout(btn._clickTimer);
 
-    if (clickCount === 1) {
-      timer = setTimeout(() => {
-        clickCount = 0;
+  clickCount++;
+  btn._clickCount = clickCount;
 
-        const appKey = btn.dataset.app;
-        const instances = appInstances[appKey] || [];
-        const minimized = instances.filter(w => w.dataset.minimized === "true");
+  if (clickCount === 1) {
+    btn._clickTimer = setTimeout(() => {
+      btn._clickCount = 0;
 
-        if (minimized.length > 0) {
-          minimized.sort((a, b) => b.minimizedAt - a.minimizedAt);
-          focusWindow(minimized[0]);
-        } else {
-          const rules = appRules[appKey] || {};
-          if (rules.stack && instances.length > 0) {
-            openStackMenu(appKey, btn);
-          }
+      const appKey = btn.dataset.app;
+      const instances = appInstances[appKey] || [];
+      const minimized = instances.filter(w => w.dataset.minimized === "true");
+
+      if (minimized.length > 0) {
+        minimized.sort((a, b) => b.minimizedAt - a.minimizedAt);
+        focusWindow(minimized[0]);
+      } else {
+        const rules = appRules[appKey] || {};
+        if (rules.stack && instances.length > 0) {
+          openStackMenu(appKey, btn);
         }
-      }, 250);
-    }
+      }
+    }, 250);
+  }
 
-    if (clickCount === 2) {
-      clearTimeout(timer);
-      clickCount = 0;
-      openApp(btn.dataset.app);
-      startMenu.style.display = "none";
-    }
-  });
+  if (clickCount === 2) {
+    btn._clickCount = 0;
+    openApp(btn.dataset.app);
+    startMenu.style.display = "none";
+  }
 });
 
-
 document.addEventListener("mouseenter", (e) => {
+  if (!e.target || !e.target.closest) return;
   const btn = e.target.closest("[data-app]");
   if (!btn) return;
 
@@ -804,6 +1198,7 @@ document.addEventListener("mouseenter", (e) => {
 }, true); // <-- CAPTURE PHASE (important)
 
 document.addEventListener("mouseleave", (e) => {
+  if (!e.target || !e.target.closest) return;
   const btn = e.target.closest("[data-app]");
   if (!btn) return;
 
@@ -879,6 +1274,27 @@ async function execCommand(command) {
   }
 
   return data;
+}
+
+function attachNativeApp(win, rules) {
+  const body = win.querySelector(".window-body");
+
+  body.innerHTML = `
+    <iframe
+      class="native-stream"
+      src="/stream/${win.dataset.instanceId}"
+      frameborder="0"
+      allow="autoplay; fullscreen"
+      style="width:100%; height:100%; background:black;">
+    </iframe>
+  `;
+
+  socket.emit("native:launch", {
+    appKey: win.dataset.appKey,
+    instanceId: win.dataset.instanceId,
+    command: rules.command,
+    stream: rules.stream || "xpra"
+  });
 }
 
 

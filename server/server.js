@@ -9,6 +9,9 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
+// maps to track native app sessions and pending UAC requests
+const nativeSessions = new Map(); 
+// instanceId -> { appKey, pid, type, url }
 const pendingUAC = new Map(); // socket.id -> { command, risks }
 
 // ==============================
@@ -90,8 +93,9 @@ app.get("/api/apps", (req, res) => {
     resizable: true,
     minimize: true,
     maximize: true,
-    taskbarIcon: false,
-    addToTaskbar: false
+    startPin: false,
+    addedTaskBar: false,
+    sessionState: false   // ✅ enable session state restoration
   };
 
   const apps = fs.readdirSync(APPS_DIR)
@@ -165,6 +169,7 @@ app.get("/download/software/:file", (req, res) => {
   res.download(path.join(SOFTWARE_DIR, req.params.file));
 });
 
+
 // ==============================
 // FALLBACK (SPA ROUTING)
 // ==============================
@@ -173,10 +178,49 @@ app.get("*", (req, res) => {
 });
 
 // ==============================
+// NATIVE APP STREAM REDIRECT
+// ==============================
+app.get("/stream/:instanceId", (req, res) => {
+  const session = nativeSessions.get(req.params.instanceId);
+  if (!session || !session.url) {
+    return res.status(404).send("No active stream");
+  }
+  res.redirect(session.url);
+});
+
+
+// ==============================
 // START SERVER
 // ==============================
 server.listen(PORT, () => {
+  // Initialize desktopState.json if it doesn't exist
+  if (!fs.existsSync(STATE_FILE)) {
+    const initialState = { windows: [], zIndexCounter: 1 };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(initialState, null, 2));
+  }
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  
+  // Watch desktopState.json for changes to debug save issues
+  console.log(`👁️ Watching ${STATE_FILE} for changes...`);
+  fs.watch(STATE_FILE, (eventType, filename) => {
+    if (eventType === 'change') {
+      try {
+        const content = fs.readFileSync(STATE_FILE, 'utf8');
+        const state = JSON.parse(content);
+        console.log('📝 desktopState.json CHANGED:');
+        console.log(`   - Windows count: ${state.windows?.length || 0}`);
+        console.log(`   - zIndexCounter: ${state.zIndexCounter}`);
+        if (state.windows && state.windows.length > 0) {
+          state.windows.forEach((w, i) => {
+            console.log(`   - Window ${i + 1}: ${w.appKey} (${w.instanceId?.slice(0, 8)})`);
+          });
+        }
+        console.log('');
+      } catch (err) {
+        console.error('❌ Error reading desktopState.json:', err.message);
+      }
+    }
+  });
 });
 
 // com
@@ -279,5 +323,116 @@ io.on("connection", (socket) => {
   socket.on("uac:deny", () => {
     socket.uacApproved = false;
   });
+
+  socket.on("native:launch", ({ appKey, instanceId, command, stream }) => {
+    const propsPath = path.join(APPS_DIR, appKey, "app.properties.json");
+    const rules = readJSON(propsPath, {});
+
+    // trust client override only if defined in properties
+    rules.command = rules.command || command;
+    rules.backend = stream || rules.backend;
+
+    launchApp(appKey, instanceId, rules, socket);
+  });
+
+  socket.on("native:kill", ({ instanceId }) => {
+    const session = nativeSessions.get(instanceId);
+    if (!session) return;
+
+    try {
+      process.kill(session.pid);
+    } catch {}
+
+    nativeSessions.delete(instanceId);
+  });
 });
+// ==============================
+
+// App launch helper
+function launchApp(appKey, rules, socket) {
+  switch (rules.backend) {
+
+    case "exec": {
+      const child = exec(rules.command);
+      nativeSessions.set(instanceId, {
+        appKey,
+        pid: child.pid,
+        type: "exec"
+      });
+
+      child.stdout?.on("data", d => {
+        socket.emit("app:output", { appKey, stdout: d.toString() });
+      });
+
+      child.stderr?.on("data", d => {
+        socket.emit("app:output", { appKey, stderr: d.toString() });
+      });
+      break;
+    }
+
+    case "xpra":
+      launchXpra(appKey, rules, socket);
+      break;
+
+    case "sunshine":
+      launchSunshine(appKey, rules, socket);
+      break;
+
+    default:
+      // web apps handled client-side
+      break;
+  }
+}
+
+function launchXpra(appKey, rules, socket) {
+  const display = `:${100 + Math.floor(Math.random() * 100)}`;
+
+  const cmd = `
+    xpra start ${display}
+    --start-child=${rules.command}
+    --html=on
+    --bind-tcp=127.0.0.1:0
+  `;
+
+  exec(cmd, (err, stdout) => {
+    if (err) {
+      socket.emit("app:error", { appKey, error: err.message });
+      return;
+    }
+
+    const match = stdout.match(`/port (\d+)/`);
+    if (!match) return;
+
+    const url = `http://localhost:${match[1]}`;
+
+    nativeSessions.set(instanceId, {
+      appKey,
+      pid: null,
+      type: "xpra",
+      url
+    });
+
+    socket.emit("app:stream", {
+      instanceId,
+      appKey,
+      type: "xpra",
+      url
+    });
+  });
+}
+
+function launchSunshine(appKey, rules, socket) {
+  exec(`sunshine --start ${rules.command}`, (err) => {
+    if (err) {
+      socket.emit("app:error", { appKey, error: err.message });
+      return;
+    }
+
+    socket.emit("app:stream", {
+      appKey,
+      type: "sunshine",
+      url: "moonlight://localhost"
+    });
+  });
+}
 // ==============================

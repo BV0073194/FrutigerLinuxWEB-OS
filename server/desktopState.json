@@ -1,4 +1,53 @@
 {
-  "windows": [],
-  "zIndexCounter": 236
+  "windows": [
+    {
+      "appKey": "software",
+      "instanceId": "84fd8f2e-4f3b-4f39-8e88-f1c7051b9367",
+      "top": "70px",
+      "left": "70px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 6,
+      "preview": null,
+      "sessionState": {
+        "inputs": {
+          "searchInput": {
+            "type": "text",
+            "value": "se"
+          }
+        },
+        "scrollPosition": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "appKey": "software",
+      "instanceId": "53adce53-db75-4e6a-933a-6c4d3440a747",
+      "top": "184px",
+      "left": "410px",
+      "width": "",
+      "height": "",
+      "minimized": false,
+      "maximized": false,
+      "zIndex": 14,
+      "preview": null,
+      "sessionState": {
+        "inputs": {
+          "searchInput": {
+            "type": "text",
+            "value": "sex"
+          }
+        },
+        "scrollPosition": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    }
+  ],
+  "zIndexCounter": 18
 }
