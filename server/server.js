@@ -442,12 +442,12 @@ function launchXpra(appKey, rules, socket, instanceId) {
 }
 
 function launchSunshine(appKey, rules, socket, instanceId) {
-  // Check if Sunshine service is running
-  exec('systemctl --user is-active sunshine.service', (err, stdout) => {
-    const isRunning = stdout.trim() === 'active';
+  // Check if Sunshine is actually running (process or service)
+  exec('pgrep -f sunshine || systemctl --user is-active sunshine.service', (err, stdout) => {
+    const isRunning = stdout.trim() && (stdout.includes('active') || /^\d+/.test(stdout.trim()));
     
     if (isRunning) {
-      console.log('✅ Sunshine service running');
+      console.log('✅ Sunshine is running');
       launchMoonlightClient(appKey, rules, socket, instanceId);
       return;
     }
@@ -460,7 +460,7 @@ function launchSunshine(appKey, rules, socket, instanceId) {
         socket.emit("app:error", { 
           appKey, 
           instanceId, 
-          error: "Failed to start Sunshine.\n\nCheck if installed:\nsystemctl --user status sunshine.service\n\nOr start manually:\nflatpak run dev.lizardbyte.app.Sunshine" 
+          error: "Failed to start Sunshine.\n\nTroubleshooting:\n• Make sure Sunshine is installed (flatpak)\n• Make sure Moonlight is installed (flatpak)\n• Pair Moonlight with Sunshine first\n• Check Sunshine web UI: https://localhost:47990" 
         });
         return;
       }
