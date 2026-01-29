@@ -73,19 +73,8 @@ if [ ! -f "package.json" ]; then
     fi
 fi
 
-# Start Xpra service
-echo "🚀 Starting Xpra service..."
-if systemctl --user is-active xpra.service &>/dev/null; then
-    echo "   ✅ Already running"
-else
-    systemctl --user start xpra.service
-    sleep 2
-    if systemctl --user is-active xpra.service &>/dev/null; then
-        echo "   ✅ Started successfully"
-    else
-        echo "   ⚠️  Failed to start (check: journalctl --user -u xpra.service)"
-    fi
-fi
+# VNC sessions are created on-demand per app instance
+# No background service needed
 
 # Start Sunshine service
 echo "🎮 Starting Sunshine service..."
@@ -129,7 +118,7 @@ echo ""
 echo "🌐 Access the system:"
 echo ""
 echo "   Web Interface:  http://localhost:3000"
-echo "   Xpra Client:    http://localhost:10000"
+echo "   VNC Ports:      6080+ (created per app instance)"
 echo "   Sunshine:       http://localhost:47990"
 echo ""
 

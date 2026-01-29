@@ -36,12 +36,13 @@ else
 fi
 
 echo ""
-echo "   Xpra (App Streaming):"
-if systemctl --user is-active xpra.service &>/dev/null 2>&1; then
-    echo "   ✅ Running on http://localhost:10000"
+echo "   VNC Components (App Streaming):"
+if command -v Xvfb &> /dev/null && command -v x11vnc &> /dev/null && [ -d "/opt/noVNC" ]; then
+    echo "   ✅ VNC components installed (sessions created on-demand)"
 else
-    echo "   ❌ Not running"
-    echo "   → Start: systemctl --user start xpra.service"
+    echo "   ❌ VNC components missing"
+    echo "   → Install: sudo apt install xvfb x11vnc websockify openbox"
+    echo "   → Clone noVNC: sudo git clone https://github.com/novnc/noVNC.git /opt/noVNC"
 fi
 
 echo ""
@@ -71,10 +72,22 @@ else
     echo "   ❌ npm not found"
 fi
 
-if command -v xpra &> /dev/null; then
-    echo "   ✅ Xpra: $(xpra --version 2>&1 | head -1)"
+if command -v Xvfb &> /dev/null; then
+    echo "   ✅ Xvfb (Virtual Display)"
 else
-    echo "   ❌ Xpra not found"
+    echo "   ❌ Xvfb not found"
+fi
+
+if command -v x11vnc &> /dev/null; then
+    echo "   ✅ x11vnc (VNC Server)"
+else
+    echo "   ❌ x11vnc not found"
+fi
+
+if [ -d "/opt/noVNC" ]; then
+    echo "   ✅ noVNC (HTML5 Client)"
+else
+    echo "   ❌ noVNC not found"
 fi
 
 if flatpak list --user 2>/dev/null | grep -q sunshine; then
