@@ -11,8 +11,12 @@ const PORT = process.env.PORT || 3000;
 
 // maps to track native app sessions and pending UAC requests
 const nativeSessions = new Map(); 
-// instanceId -> { appKey, pid, type, url }
+// instanceId -> { appKey, pid, type, url, display, port }
 const pendingUAC = new Map(); // socket.id -> { command, risks }
+
+// Track Xpra port allocations (starting from 10001)
+let nextXpraPort = 10001;
+const xpraPortsInUse = new Set();
 
 // ==============================
 // PATHS
@@ -350,7 +354,14 @@ io.on("connection", (socket) => {
       // Stop xpra display properly
       exec(`xpra stop ${session.display}`, (err) => {
         if (err) console.error("Error stopping xpra:", err);
+        else console.log(`✅ Stopped Xpra display ${session.display}`);
       });
+      
+      // Free up the port
+      if (session.port) {
+        xpraPortsInUse.delete(session.port);
+        console.log(`✅ Released port ${session.port}`);
+      }
     } else if (session.type === 'moonlight') {
       // Kill Moonlight client
       exec('pkill -f moonlight', (err) => {
@@ -358,10 +369,12 @@ io.on("connection", (socket) => {
       });
     }
 
-    try {
-      process.kill(session.pid);
-    } catch (err) {
-      console.error("Error killing process:", err);
+    if (session.pid) {
+      try {
+        process.kill(session.pid);
+      } catch (err) {
+        console.error("Error killing process:", err);
+      }
     }
 
     nativeSessions.delete(instanceId);
@@ -408,59 +421,54 @@ function launchApp(appKey, rules, socket) {
 function launchXpra(appKey, rules, socket, instanceId) {
   const appCommand = rules.command || 'xterm';
   
-  // Check if Xpra service is running
-  exec('systemctl --user is-active xpra.service', (err, stdout) => {
-    const isRunning = stdout.trim() === 'active';
-    
-    if (!isRunning) {
-      console.error(`❌ Xpra service not running`);
+  // Allocate a unique port for this instance
+  const port = nextXpraPort++;
+  xpraPortsInUse.add(port);
+  const display = `:${port - 10000}`; // Display :1 for port 10001, :2 for 10002, etc.
+  
+  console.log(`🚀 Creating isolated Xpra session for ${appCommand}`);
+  console.log(`   Display: ${display}, Port: ${port}`);
+
+  // Start a new Xpra session for this specific app instance
+  const xpraCommand = `xpra start ${display} --daemon=yes --bind-tcp=0.0.0.0:${port} --html=on --start-child="${appCommand}" --exit-with-child=yes`;
+  
+  exec(xpraCommand, (startErr, startOut, startStderr) => {
+    if (startErr) {
+      console.error(`❌ Failed to start Xpra session:`, startErr);
+      console.error(`   stderr:`, startStderr);
+      xpraPortsInUse.delete(port);
       socket.emit("app:error", { 
         appKey, 
         instanceId, 
-        error: "Xpra service not running.\n\nStart it with:\nsystemctl --user start xpra.service" 
+        error: `Failed to start Xpra session.\n\nError: ${startErr.message}\n\nMake sure Xpra is installed.` 
       });
       return;
     }
 
-    // Detect the Xpra display dynamically
-    exec('xpra list 2>/dev/null | grep "^LIVE session at" | head -1 | sed -E "s/.*session at :([0-9]+).*/:\\1/"', (displayErr, displayOut) => {
-      const xpraDisplay = displayOut.trim() || ':1';
-      console.log(`✅ Detected Xpra display: ${xpraDisplay}`);
-      console.log(`✅ Launching ${appCommand} in Xpra session`);
+    console.log(`✅ Xpra session started on display ${display}, port ${port}`);
+    console.log(`   Command: ${appCommand}`);
 
-      // Launch the app in the Xpra session using xpra control
-      exec(`xpra control ${xpraDisplay} start ${appCommand}`, (launchErr, launchOut) => {
-        if (launchErr) {
-          console.error(`❌ Failed to launch ${appCommand}:`, launchErr);
-          socket.emit("app:error", { 
-            appKey, 
-            instanceId, 
-            error: `Failed to launch ${appCommand}.\n\nError: ${launchErr.message}` 
-          });
-          return;
-        }
-
-        console.log(`✅ ${appCommand} launched:`, launchOut.trim());
-
-        // Return the HTML5 client URL
-        const url = `http://localhost:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
-        
-        nativeSessions.set(instanceId, {
-          appKey,
-          type: "xpra",
-          url,
-          port: 10000,
-          command: appCommand
-        });
-
-        socket.emit("app:stream", {
-          instanceId,
-          appKey,
-          type: "xpra",
-          url
-        });
+    // Wait for Xpra to fully start
+    setTimeout(() => {
+      // Return the HTML5 client URL for this specific instance
+      const url = `http://localhost:${port}/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
+      
+      nativeSessions.set(instanceId, {
+        appKey,
+        type: "xpra",
+        url,
+        port,
+        display,
+        command: appCommand
       });
-    });
+
+      socket.emit("app:stream", {
+        instanceId,
+        appKey,
+        type: "xpra",
+        url
+      });
+    }, 2000); // Wait 2 seconds for Xpra to be ready
   });
 }
 
