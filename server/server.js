@@ -442,12 +442,8 @@ function launchXpra(appKey, rules, socket, instanceId) {
 
         console.log(`✅ ${appCommand} launched:`, launchOut.trim());
 
-        // Get the host from the socket request (use VM IP instead of localhost)
-        const host = socket.request.headers.host || 'localhost:3000';
-        const hostname = host.split(':')[0];
-        
-        // Return the HTML5 client URL using the same hostname the client connected with
-        const url = `http://${hostname}:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
+        // Return the HTML5 client URL
+        const url = `http://localhost:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
         
         nativeSessions.set(instanceId, {
           appKey,
