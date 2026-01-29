@@ -18,6 +18,7 @@ const pendingUAC = new Map(); // socket.id -> { command, risks }
 // Track Xpra port allocations (starting from 10001)
 let nextXpraPort = 10001;
 const xpraPortsInUse = new Set();
+let portAllocationLock = Promise.resolve();  // Mutex for concurrent launches
 
 // ==============================
 // PATHS
@@ -432,15 +433,17 @@ function launchApp(appKey, rules, socket) {
 }
 
 function launchXpra(appKey, rules, socket, instanceId) {
-  const appCommand = rules.command || 'xterm';
-  
-  // Allocate unique ports for this instance
-  const vncPort = 5900 + nextXpraPort;  // VNC port
-  const webPort = 6080 + nextXpraPort;  // noVNC websockify port
-  const display = `:${nextXpraPort}`;
-  
-  nextXpraPort++;
-  xpraPortsInUse.add(webPort);
+  // Use mutex to prevent race conditions when multiple instances launch simultaneously
+  portAllocationLock = portAllocationLock.then(() => {
+    const appCommand = rules.command || 'xterm';
+    
+    // Allocate unique ports for this instance
+    const vncPort = 5900 + nextXpraPort;  // VNC port
+    const webPort = 6080 + nextXpraPort;  // noVNC websockify port
+    const display = `:${nextXpraPort}`;
+    
+    nextXpraPort++;
+    xpraPortsInUse.add(webPort);
   
   console.log(`🚀 Creating isolated VNC session for ${appCommand}`);
   console.log(`   Display: ${display}, VNC Port: ${vncPort}, Web Port: ${webPort}`);
@@ -541,14 +544,21 @@ function launchXpra(appKey, rules, socket, instanceId) {
 
           // Give websockify a moment to start, then emit the URL
           setTimeout(() => {
-            // Use the actual IP the client connected to (not localhost)
-            // Get it from the socket's server address
-            const serverAddress = server.address();
-            const hostname = socket.handshake.address.includes('::ffff:') 
-              ? socket.handshake.address.replace('::ffff:', '')  // Extract IPv4 from IPv6-mapped address
-              : (serverAddress.address === '::' || serverAddress.address === '0.0.0.0')
-                ? require('os').networkInterfaces()['eth0']?.[0]?.address || '192.168.225.133'
-                : serverAddress.address;
+            // Get the VM's actual IP address from network interfaces
+            const os = require('os');
+            const interfaces = os.networkInterfaces();
+            let hostname = 'localhost';
+            
+            // Scan all network interfaces for a non-internal IPv4 address
+            for (const name of Object.keys(interfaces)) {
+              const iface = interfaces[name].find(addr => 
+                addr.family === 'IPv4' && !addr.internal
+              );
+              if (iface) {
+                hostname = iface.address;
+                break;
+              }
+            }
             
             const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
             
@@ -576,6 +586,12 @@ function launchXpra(appKey, rules, socket, instanceId) {
             });
           }, 1500);
   }, 1000); // Wait for Xvfb to be ready
+  }).catch(err => {
+    console.error('❌ Error launching VNC session:', err);
+    if (typeof webPort !== 'undefined') {
+      xpraPortsInUse.delete(webPort);
+    }
+  });
 }
 
 function launchSunshine(appKey, rules, socket, instanceId) {
