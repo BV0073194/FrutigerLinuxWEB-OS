@@ -553,17 +553,24 @@ AUTOLOGIN
 
 # Add startx to .bash_profile
 if ! grep -q "startx" ~/.bash_profile 2>/dev/null; then
-    cat >> ~/.bash_profile << XSTART
+    cat >> ~/.bash_profile << 'XSTART'
 
-# Start X on login
-if [ -z "\$DISPLAY" ] && [ "\$(tty)" = "/dev/tty1" ]; then
-    startx
+# Start X on login (only on tty1, not SSH)
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx
 fi
 XSTART
 fi
 
 echo "✅ Auto-login configured for $(whoami)"
 echo "✅ Kiosk autostart configured"
+
+# Export DISPLAY for systemd user services
+mkdir -p ~/.config/environment.d
+cat > ~/.config/environment.d/display.conf << 'DISPCONF'
+DISPLAY=:0
+XAUTHORITY=$HOME/.Xauthority
+DISPCONF
 
 # ============================================
 # 12. CREATE EXAMPLE APP DIRECTORIES
@@ -620,4 +627,172 @@ echo ""
 echo "📖 Documentation:"
 echo "   - Gaming: See QUICK_START_GAMING.md"
 echo "   - Full guide: See GAMING_SETUP.md"
+echo ""
+
+# ============================================
+# 10. INSTALL AUTO-UPDATE SYSTEM
+# ============================================
+echo ""
+echo "🔄 Installing Auto-Update System..."
+
+REPO_URL="https://github.com/BV0073194/FrutigerLinux-WEB-OS"
+INSTALL_DIR="$(pwd)"
+UPDATE_SCRIPT="$INSTALL_DIR/update-system.sh"
+
+# Ensure update script is executable
+if [ -f "$UPDATE_SCRIPT" ]; then
+    chmod +x "$UPDATE_SCRIPT"
+    echo "✓ Update script made executable"
+fi
+
+# Create systemd user service for updates
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/frutiger-update.service << 'UPDATESERVICE'
+[Unit]
+Description=FrutigerLinux Auto-Update Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'cd /opt/FrutigerLinuxWEB-OS 2>/dev/null || cd ~/FrutigerLinuxWEB-OS; ./update-system.sh'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+UPDATESERVICE
+
+# Create systemd timer (checks every 6 hours)
+cat > ~/.config/systemd/user/frutiger-update.timer << 'UPDATETIMER'
+[Unit]
+Description=FrutigerLinux Auto-Update Timer
+Requires=frutiger-update.service
+
+[Timer]
+# Run 5 minutes after boot
+OnBootSec=5min
+# Then every 6 hours
+OnUnitActiveSec=6h
+# Run even if missed (e.g., system was off)
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UPDATETIMER
+
+echo "✓ Auto-update service and timer created"
+
+# Reload systemd and enable timer
+systemctl --user daemon-reload
+systemctl --user enable frutiger-update.timer 2>/dev/null || true
+systemctl --user start frutiger-update.timer 2>/dev/null || true
+
+echo "✅ Auto-update system installed"
+echo "   🔄 Checks GitHub every 6 hours: $REPO_URL"
+echo "   📋 Check status: systemctl --user status frutiger-update.timer"
+echo "   📜 View logs: journalctl --user -u frutiger-update.service"
+
+# Create log file with proper permissions
+sudo touch /var/log/frutiger-update.log 2>/dev/null || true
+sudo chmod 666 /var/log/frutiger-update.log 2>/dev/null || true
+
+# ============================================
+# 11. SUNSHINE FIX (if service exists but failing)
+# ============================================
+
+if systemctl --user list-unit-files 2>/dev/null | grep -q sunshine.service; then
+    if ! systemctl --user is-active --quiet sunshine.service 2>/dev/null; then
+        echo ""
+        echo "⚠️  Sunshine service detected but not running..."
+        echo "🔧 Applying automatic fix..."
+        
+        # Kill all existing processes
+        systemctl --user stop sunshine.service 2>/dev/null || true
+        pkill -f "sunshine" 2>/dev/null || true
+        pkill -f "dev.lizardbyte.app.Sunshine" 2>/dev/null || true
+        sleep 2
+        
+        # Configure uinput permissions
+        sudo bash -c 'echo "KERNEL==\"uinput\", SUBSYSTEM==\"misc\", TAG+=\"uaccess\", OPTIONS+=\"static_node=uinput\"" > /etc/udev/rules.d/60-sunshine-input.rules' 2>/dev/null || true
+        sudo udevadm control --reload-rules 2>/dev/null || true
+        sudo udevadm trigger 2>/dev/null || true
+        sudo usermod -a -G input $USER 2>/dev/null || true
+        
+        # Create config directories
+        mkdir -p ~/.config/sunshine
+        mkdir -p ~/.var/app/dev.lizardbyte.app.Sunshine/config/sunshine
+        
+        # Create optimized config
+        cat > ~/.var/app/dev.lizardbyte.app.Sunshine/config/sunshine/sunshine.conf << 'SUNCONF'
+encoder = software
+capture = x11
+output_name = 0
+min_fps_factor = 1
+channels = 2
+fec_percentage = 20
+min_threads = 2
+resolutions = [
+    1920x1080
+]
+fps = [30, 60]
+SUNCONF
+        
+        # Detect DISPLAY
+        if [ -z "$DISPLAY" ]; then
+            DISPLAY_NUM=$(loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Display --value 2>/dev/null)
+            [ -n "$DISPLAY_NUM" ] && export DISPLAY=":$DISPLAY_NUM" || export DISPLAY=":0"
+        fi
+        [ -z "$XAUTHORITY" ] && export XAUTHORITY="$HOME/.Xauthority"
+        
+        # Recreate service with full permissions
+        cat > ~/.config/systemd/user/sunshine.service << SUNSERVICE
+[Unit]
+Description=Sunshine Game Streaming Server
+After=graphical-session.target network-online.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+Environment="DISPLAY=${DISPLAY}"
+Environment="XAUTHORITY=${XAUTHORITY}"
+Environment="XDG_RUNTIME_DIR=/run/user/$(id -u)"
+ExecStart=/usr/bin/flatpak run --command=sunshine --filesystem=host --device=all --share=ipc --share=network --socket=x11 --socket=pulseaudio dev.lizardbyte.app.Sunshine
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
+SUNSERVICE
+        
+        # Restart service
+        systemctl --user daemon-reload
+        systemctl --user enable sunshine.service 2>/dev/null || true
+        systemctl --user restart sunshine.service 2>/dev/null || true
+        sleep 3
+        
+        if systemctl --user is-active --quiet sunshine.service 2>/dev/null; then
+            echo "✅ Sunshine fix successful - service running"
+        else
+            echo "⚠️  Sunshine still not running - check logs: journalctl --user -u sunshine.service"
+        fi
+    fi
+fi
+
+echo ""
+echo "=========================================="
+echo "🎉 Complete Setup Finished!"
+echo "=========================================="
+echo ""
+echo "✅ All systems installed and configured:"
+echo "   ✓ FrutigerLinuxWEB-OS application"
+echo "   ✓ Auto-update (checks GitHub every 6h)"
+echo "   ✓ Game streaming (Sunshine + Moonlight)"
+echo "   ✓ App streaming (Xpra)"
+echo "   ✓ Kiosk mode auto-start"
+echo ""
+echo "🚀 Ready to use! Reboot recommended: sudo reboot"
 echo ""
