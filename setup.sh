@@ -124,78 +124,25 @@ npm install --no-bin-links
 echo "✅ npm packages installed"
 
 # ============================================
-# 4. INSTALL XPRA (for GUI app streaming)
+# 4. INSTALL VNC COMPONENTS (for GUI app streaming in iframes)
 # ============================================
 echo ""
-echo "📦 Installing Xpra for app streaming..."
-if ! command -v xpra &> /dev/null; then
-    # Save current directory
-    ORIGINAL_DIR="$(pwd)"
-    
-    # Add official Xpra repository
-    echo "📥 Adding official Xpra repository..."
-    
-    # Download and add Xpra GPG key
-    wget -O- https://xpra.org/gpg.asc | sudo gpg --dearmor -o /usr/share/keyrings/xpra-archive-keyring.gpg
-    
-    # Detect Debian codename
-    DEBIAN_CODENAME=$(lsb_release -cs)
-    
-    # Add Xpra repository with signed-by keyring
-    echo "deb [signed-by=/usr/share/keyrings/xpra-archive-keyring.gpg] https://xpra.org/ $DEBIAN_CODENAME main" | sudo tee /etc/apt/sources.list.d/xpra.list > /dev/null
-    
-    sudo apt update
-    
-    # Install Xpra and xpra-html5
-    if sudo apt install -y xpra xpra-html5; then
-        echo "✅ Xpra and xpra-html5 installed"
-        
-        # Create systemd user service for Xpra
-        echo "🔧 Setting up Xpra auto-start..."
-        mkdir -p ~/.config/systemd/user
-        
-        cat > ~/.config/systemd/user/xpra.service << 'XPRA_SERVICE'
-[Unit]
-Description=Xpra HTML5 Server for App Streaming
-After=network.target
+echo "📦 Installing VNC components for isolated app windows..."
 
-[Service]
-Type=simple
-ExecStart=/usr/bin/xpra start --daemon=no --bind-tcp=0.0.0.0:10000 --html=on --start-child=xterm --exit-with-children=no
-Restart=on-failure
-RestartSec=5
+# Install Xvfb (virtual framebuffer), x11vnc, and noVNC
+sudo apt install -y xvfb x11vnc websockify openbox git
 
-[Install]
-WantedBy=default.target
-XPRA_SERVICE
-        
-        # Enable and start Xpra service
-        systemctl --user daemon-reload
-        systemctl --user enable xpra.service
-        systemctl --user start xpra.service
-        
-        # Wait for Xpra to start
-        sleep 3
-        
-        # Check if Xpra is running
-        if systemctl --user is-active --quiet xpra.service; then
-            echo "✅ Xpra service created and started"
-            echo "   HTML5 access: http://localhost:10000"
-            echo "   Apps will stream through browser automatically"
-        else
-            echo "⚠️  Xpra failed to start automatically"
-            echo "   Start manually: systemctl --user start xpra.service"
-        fi
-    else
-        echo "⚠️  Xpra installation failed (optional component)"
-        echo "   Linux app streaming will not be available, but gaming streaming will work"
-    fi
-    
-    # Return to original directory
-    cd "$ORIGINAL_DIR"
+# Install noVNC (HTML5 VNC client)
+if [ ! -d "/opt/noVNC" ]; then
+    echo "📥 Installing noVNC..."
+    sudo git clone https://github.com/novnc/noVNC.git /opt/noVNC
+    sudo git clone https://github.com/novnc/websockify.git /opt/noVNC/utils/websockify
+    echo "✅ noVNC installed"
 else
-    echo "✅ Xpra already installed"
+    echo "✅ noVNC already installed"
 fi
+
+echo "✅ VNC components installed for isolated app streaming"
 
 # ============================================
 # 5. INSTALL CHROMIUM FOR KIOSK MODE

@@ -362,6 +362,31 @@ io.on("connection", (socket) => {
         xpraPortsInUse.delete(session.port);
         console.log(`✅ Released port ${session.port}`);
       }
+    } else if (session.type === 'vnc' && session.display) {
+      // Kill VNC session components
+      console.log(`🛑 Stopping VNC session ${session.display}`);
+      
+      // Kill x11vnc
+      exec(`pkill -f "x11vnc.*${session.vncPort}"`, (err) => {
+        if (err) console.error("Error stopping x11vnc:", err);
+      });
+      
+      // Kill websockify
+      exec(`pkill -f "websockify.*${session.webPort}"`, (err) => {
+        if (err) console.error("Error stopping websockify:", err);
+      });
+      
+      // Kill Xvfb
+      exec(`pkill -f "Xvfb ${session.display}"`, (err) => {
+        if (err) console.error("Error stopping Xvfb:", err);
+        else console.log(`✅ Stopped VNC display ${session.display}`);
+      });
+      
+      // Free up ports
+      if (session.webPort) {
+        xpraPortsInUse.delete(session.webPort);
+        console.log(`✅ Released port ${session.webPort}`);
+      }
     } else if (session.type === 'moonlight') {
       // Kill Moonlight client
       exec('pkill -f moonlight', (err) => {
@@ -421,67 +446,113 @@ function launchApp(appKey, rules, socket) {
 function launchXpra(appKey, rules, socket, instanceId) {
   const appCommand = rules.command || 'xterm';
   
-  // Allocate a unique port for this instance
-  const port = nextXpraPort++;
-  xpraPortsInUse.add(port);
-  const display = `:${port - 10000}`; // Display :1 for port 10001, :2 for 10002, etc.
+  // Allocate unique ports for this instance
+  const vncPort = 5900 + nextXpraPort;  // VNC port
+  const webPort = 6080 + nextXpraPort;  // noVNC websockify port
+  const display = `:${nextXpraPort}`;
   
-  console.log(`🚀 Creating isolated Xpra seamless session for ${appCommand}`);
-  console.log(`   Display: ${display}, Port: ${port}`);
+  nextXpraPort++;
+  xpraPortsInUse.add(webPort);
+  
+  console.log(`🚀 Creating isolated VNC session for ${appCommand}`);
+  console.log(`   Display: ${display}, VNC Port: ${vncPort}, Web Port: ${webPort}`);
 
-  // Start Xpra in SEAMLESS mode - individual windows, no desktop
-  const xpraCommand = `xpra start ${display} --daemon=yes \
-    --bind-tcp=0.0.0.0:${port} \
-    --html=on \
-    --start-child="${appCommand}" \
-    --exit-with-child=yes \
-    --desktop-scaling=off \
-    --headerbar=no \
-    --border=none \
-    --title="@title@" \
-    --window-close=forward \
-    --splash=no \
-    --notifications=no \
-    --system-tray=no \
-    --cursors=no`;
+  // Start virtual X server with the app
+  const xvfbCmd = `Xvfb ${display} -screen 0 1280x720x24 &`;
   
-  exec(xpraCommand, (startErr, startOut, startStderr) => {
-    if (startErr) {
-      console.error(`❌ Failed to start Xpra session:`, startErr);
-      console.error(`   stderr:`, startStderr);
-      xpraPortsInUse.delete(port);
+  exec(xvfbCmd, (xvfbErr) => {
+    if (xvfbErr) {
+      console.error(`❌ Failed to start Xvfb:`, xvfbErr);
+      xpraPortsInUse.delete(webPort);
       socket.emit("app:error", { 
         appKey, 
         instanceId, 
-        error: `Failed to start Xpra session.\n\nError: ${startErr.message}\n\nMake sure Xpra is installed.` 
+        error: `Failed to start virtual display.\n\nError: ${xvfbErr.message}` 
       });
       return;
     }
 
-    console.log(`✅ Xpra seamless session started on display ${display}, port ${port}`);
-    console.log(`   Command: ${appCommand}`);
-
-    // Wait for Xpra to fully start and app to launch
+    // Wait for Xvfb to be ready
     setTimeout(() => {
-      // Return the HTML5 client URL with seamless mode settings
-      const url = `http://localhost:${port}/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false&desktop_fullscreen=false`;
-      
-      nativeSessions.set(instanceId, {
-        appKey,
-        type: "xpra",
-        url,
-        port,
-        display,
-        command: appCommand
+      // Start openbox window manager
+      exec(`DISPLAY=${display} openbox &`, (wmErr) => {
+        if (wmErr) console.error(`Warning: Failed to start openbox:`, wmErr);
       });
 
-      socket.emit("app:stream", {
-        instanceId,
-        appKey,
-        type: "xpra",
-        url
+      // Start the application
+      exec(`DISPLAY=${display} ${appCommand} &`, (appErr) => {
+        if (appErr) {
+          console.error(`❌ Failed to start ${appCommand}:`, appErr);
+          xpraPortsInUse.delete(webPort);
+          socket.emit("app:error", { 
+            appKey, 
+            instanceId, 
+            error: `Failed to start application.\n\nError: ${appErr.message}` 
+          });
+          return;
+        }
+
+        console.log(`✅ Application started: ${appCommand}`);
+
+        // Start x11vnc to stream the display
+        const vncCmd = `x11vnc -display ${display} -rfbport ${vncPort} -forever -shared -nopw -quiet &`;
+        
+        exec(vncCmd, (vncErr) => {
+          if (vncErr) {
+            console.error(`❌ Failed to start x11vnc:`, vncErr);
+            xpraPortsInUse.delete(webPort);
+            socket.emit("app:error", { 
+              appKey, 
+              instanceId, 
+              error: `Failed to start VNC server.\n\nError: ${vncErr.message}` 
+            });
+            return;
+          }
+
+          console.log(`✅ VNC server started on port ${vncPort}`);
+
+          // Start websockify (noVNC proxy)
+          const websockifyCmd = `websockify --web=/opt/noVNC ${webPort} localhost:${vncPort} &`;
+          
+          exec(websockifyCmd, (wsErr) => {
+            if (wsErr) {
+              console.error(`❌ Failed to start websockify:`, wsErr);
+              xpraPortsInUse.delete(webPort);
+              socket.emit("app:error", { 
+                appKey, 
+                instanceId, 
+                error: `Failed to start web proxy.\n\nError: ${wsErr.message}` 
+              });
+              return;
+            }
+
+            console.log(`✅ noVNC ready on port ${webPort}`);
+
+            // Wait for everything to be fully ready
+            setTimeout(() => {
+              const url = `http://localhost:${webPort}/vnc.html?autoconnect=true&resize=scale`;
+              
+              nativeSessions.set(instanceId, {
+                appKey,
+                type: "vnc",
+                url,
+                vncPort,
+                webPort,
+                display,
+                command: appCommand
+              });
+
+              socket.emit("app:stream", {
+                instanceId,
+                appKey,
+                type: "vnc",
+                url
+              });
+            }, 2000);
+          });
+        });
       });
-    }, 4000); // Wait 4 seconds for Xpra to be ready and app to launch
+    }, 1000); // Wait for Xvfb to be ready
   });
 }
 

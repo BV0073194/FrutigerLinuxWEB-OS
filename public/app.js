@@ -855,6 +855,11 @@ function closeWindow(win) {
     style.remove();
   });
   
+  // Close Xpra popup window if it exists
+  if (win.xpraWindow && !win.xpraWindow.closed) {
+    win.xpraWindow.close();
+  }
+  
   appInstances[appKey] = appInstances[appKey].filter((w) => w !== win);
   if (win.taskbarIcon) {
     win.taskbarIcon.remove();
@@ -1391,7 +1396,7 @@ function attachNativeApp(win, rules) {
           </div>
         `;
       } else if (data.url) {
-        // Embedded stream (like Xpra)
+        // VNC stream - works perfectly in iframes!
         body.innerHTML = `
           <iframe
             class="native-stream"
