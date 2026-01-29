@@ -521,7 +521,9 @@ function launchXpra(appKey, rules, socket, instanceId) {
 
             // Wait for everything to be fully ready
             setTimeout(() => {
-              const url = `http://localhost:${webPort}/vnc.html?autoconnect=true&resize=scale`;
+              // Use the server's hostname/IP instead of localhost for remote access
+              const hostname = socket.request.headers.host.split(':')[0];
+              const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
               
               nativeSessions.set(instanceId, {
                 appKey,
@@ -533,6 +535,7 @@ function launchXpra(appKey, rules, socket, instanceId) {
                 command: appCommand
               });
 
+              console.log(`📺 Emitting stream URL: ${url}`);
               socket.emit("app:stream", {
                 instanceId,
                 appKey,
