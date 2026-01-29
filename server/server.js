@@ -541,8 +541,15 @@ function launchXpra(appKey, rules, socket, instanceId) {
 
           // Give websockify a moment to start, then emit the URL
           setTimeout(() => {
-            // Use the server's hostname/IP instead of localhost for remote access
-            const hostname = socket.request.headers.host.split(':')[0];
+            // Use the actual IP the client connected to (not localhost)
+            // Get it from the socket's server address
+            const serverAddress = server.address();
+            const hostname = socket.handshake.address.includes('::ffff:') 
+              ? socket.handshake.address.replace('::ffff:', '')  // Extract IPv4 from IPv6-mapped address
+              : (serverAddress.address === '::' || serverAddress.address === '0.0.0.0')
+                ? require('os').networkInterfaces()['eth0']?.[0]?.address || '192.168.225.133'
+                : serverAddress.address;
+            
             const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
             
             console.log(`📺 DEBUG - hostname: ${hostname}`);
