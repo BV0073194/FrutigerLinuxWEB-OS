@@ -503,7 +503,10 @@ function launchXpra(appKey, rules, socket, instanceId) {
           console.log(`✅ VNC server started on port ${vncPort}`);
 
           // Start websockify (noVNC proxy)
-          const websockifyCmd = `websockify --web=/opt/noVNC ${webPort} localhost:${vncPort} &`;
+          // Start websockify (noVNC proxy) - listen on all interfaces for remote access
+          const websockifyCmd = `websockify --web=/opt/noVNC 0.0.0.0:${webPort} localhost:${vncPort} &`;
+          
+          console.log(`🔧 Starting websockify: ${websockifyCmd}`);
           
           exec(websockifyCmd, (wsErr) => {
             if (wsErr) {
@@ -524,6 +527,10 @@ function launchXpra(appKey, rules, socket, instanceId) {
               // Use the server's hostname/IP instead of localhost for remote access
               const hostname = socket.request.headers.host.split(':')[0];
               const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
+              
+              console.log(`📺 DEBUG - hostname: ${hostname}`);
+              console.log(`📺 DEBUG - webPort: ${webPort}`);
+              console.log(`📺 DEBUG - Final URL: ${url}`);
               
               nativeSessions.set(instanceId, {
                 appKey,
