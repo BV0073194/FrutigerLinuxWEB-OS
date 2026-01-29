@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
 const { Server } = require("socket.io");
+const { exec, spawn } = require("child_process");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -503,54 +504,62 @@ function launchXpra(appKey, rules, socket, instanceId) {
           console.log(`✅ VNC server started on port ${vncPort}`);
 
           // Start websockify (noVNC proxy)
-          // Start websockify (noVNC proxy) - listen on all interfaces for remote access
-          const websockifyCmd = `websockify --web=/opt/noVNC 0.0.0.0:${webPort} localhost:${vncPort} &`;
+          // Start websockify (noVNC proxy) - use spawn for proper background process
+          console.log(`🔧 Starting websockify on 0.0.0.0:${webPort} -> localhost:${vncPort}`);
           
-          console.log(`🔧 Starting websockify: ${websockifyCmd}`);
+          const websockify = spawn('websockify', [
+            '--web=/opt/noVNC',
+            `0.0.0.0:${webPort}`,
+            `localhost:${vncPort}`
+          ]);
           
-          exec(websockifyCmd, (wsErr) => {
-            if (wsErr) {
-              console.error(`❌ Failed to start websockify:`, wsErr);
-              xpraPortsInUse.delete(webPort);
-              socket.emit("app:error", { 
-                appKey, 
-                instanceId, 
-                error: `Failed to start web proxy.\n\nError: ${wsErr.message}` 
-              });
-              return;
-            }
-
-            console.log(`✅ noVNC ready on port ${webPort}`);
-
-            // Wait for everything to be fully ready
-            setTimeout(() => {
-              // Use the server's hostname/IP instead of localhost for remote access
-              const hostname = socket.request.headers.host.split(':')[0];
-              const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
-              
-              console.log(`📺 DEBUG - hostname: ${hostname}`);
-              console.log(`📺 DEBUG - webPort: ${webPort}`);
-              console.log(`📺 DEBUG - Final URL: ${url}`);
-              
-              nativeSessions.set(instanceId, {
-                appKey,
-                type: "vnc",
-                url,
-                vncPort,
-                webPort,
-                display,
-                command: appCommand
-              });
-
-              console.log(`📺 Emitting stream URL: ${url}`);
-              socket.emit("app:stream", {
-                instanceId,
-                appKey,
-                type: "vnc",
-                url
-              });
-            }, 2000);
+          websockify.stdout.on('data', (data) => {
+            console.log(`websockify: ${data}`);
           });
+          
+          websockify.stderr.on('data', (data) => {
+            console.error(`websockify error: ${data}`);
+          });
+          
+          websockify.on('error', (err) => {
+            console.error(`❌ Failed to start websockify:`, err);
+            xpraPortsInUse.delete(webPort);
+            socket.emit("app:error", { 
+              appKey, 
+              instanceId, 
+              error: `Failed to start web proxy.\n\nError: ${err.message}` 
+            });
+          });
+
+          // Give websockify a moment to start, then emit the URL
+          setTimeout(() => {
+            // Use the server's hostname/IP instead of localhost for remote access
+            const hostname = socket.request.headers.host.split(':')[0];
+            const url = `http://${hostname}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
+            
+            console.log(`📺 DEBUG - hostname: ${hostname}`);
+            console.log(`📺 DEBUG - webPort: ${webPort}`);
+            console.log(`📺 DEBUG - Final URL: ${url}`);
+            
+            nativeSessions.set(instanceId, {
+              appKey,
+              type: "vnc",
+              url,
+              vncPort,
+              webPort,
+              display,
+              command: appCommand,
+              websockifyPid: websockify.pid
+            });
+
+            console.log(`📺 Emitting stream URL: ${url}`);
+            socket.emit("app:stream", {
+              instanceId,
+              appKey,
+              type: "vnc",
+              url
+            });
+          }, 1500);
         });
       });
     }, 1000); // Wait for Xvfb to be ready

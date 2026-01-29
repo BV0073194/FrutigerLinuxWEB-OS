@@ -9,6 +9,19 @@ const clock = document.getElementById("clock");
 const startPin = document.querySelector(".start-menu-grid");
 const taskbarIcons = document.querySelector(".taskbar-icons");
 
+// UUID generator for browser compatibility
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback UUID v4 generator
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 let zIndexCounter = 1;
 var loadedModules = {};
 let isRestoringState = false; // Flag to prevent saves during restoration
@@ -559,7 +572,7 @@ async function openApp(appKey, isRestoring = false, sessionState = null) {
   windowContainer.appendChild(win);
   instances.push(win);
 
-  const instanceId = crypto.randomUUID();
+  const instanceId = generateUUID();
   win.dataset.instanceId = instanceId;
   
   // Store session state for restoration
