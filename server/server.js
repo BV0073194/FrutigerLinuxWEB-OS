@@ -221,10 +221,6 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
 
-// com
-
-const { exec } = require("child_process");
-
 const BLACKLISTED_COMMANDS = [
   'rm -rf /',
   ':(){ :|:& };:', // fork bomb
