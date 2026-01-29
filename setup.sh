@@ -258,24 +258,49 @@ echo "📦 Installing Sunshine & Moonlight for game streaming..."
 echo "ℹ️  Sunshine = Server (streams games), Moonlight = Client (receives stream)"
 echo ""
 
-if ! flatpak list --user 2>/dev/null | grep -q sunshine; then
+# Install Sunshine dependencies for native build
+echo "📥 Installing Sunshine dependencies..."
+sudo apt install -y \
+    libevdev-dev \
+    libpulse-dev \
+    libopus-dev \
+    libxtst-dev \
+    libx11-dev \
+    libxrandr-dev \
+    libxfixes-dev \
+    libxcb1-dev \
+    libxcb-shm0-dev \
+    libxcb-xfixes0-dev \
+    libavcodec-dev \
+    libswscale-dev \
+    libdrm-dev \
+    libcap-dev \
+    cmake \
+    ninja-build
+
+if ! command -v sunshine &> /dev/null && ! flatpak list --user 2>/dev/null | grep -q sunshine; then
     set +e  # Temporarily disable exit on error for optional component
     
-    # Install Sunshine via Flatpak (user install)
+    # Try to install from official Sunshine repo first
     echo "📥 Installing Sunshine via Flatpak (user install)..."
     flatpak install --user -y flathub dev.lizardbyte.app.Sunshine
     
     if flatpak list --user 2>/dev/null | grep -q sunshine; then
-        echo "✅ Sunshine installed"
-        echo "   Run with: flatpak run dev.lizardbyte.app.Sunshine"
-        echo "   Web UI: http://localhost:47990"
+        echo "✅ Sunshine installed via Flatpak"
+        SUNSHINE_EXEC="/usr/bin/flatpak run --filesystem=host --device=all --share=ipc dev.lizardbyte.app.Sunshine"
     else
         echo "⚠️  Sunshine installation failed, but continuing setup..."
+        SUNSHINE_EXEC="sunshine"
     fi
     
     set -e  # Re-enable exit on error
 else
     echo "✅ Sunshine already installed"
+    if command -v sunshine &> /dev/null; then
+        SUNSHINE_EXEC="sunshine"
+    else
+        SUNSHINE_EXEC="/usr/bin/flatpak run --filesystem=host --device=all --share=ipc dev.lizardbyte.app.Sunshine"
+    fi
 fi
 
 # Install Moonlight client
@@ -290,17 +315,30 @@ fi
 echo ""
 echo "🎮 Setting up Sunshine auto-start..."
 
+# Configure uinput permissions for virtual input devices
+echo "🔧 Configuring uinput permissions for virtual devices..."
+sudo bash -c 'echo "KERNEL==\"uinput\", SUBSYSTEM==\"misc\", TAG+=\"uaccess\", OPTIONS+=\"static_node=uinput\"" > /etc/udev/rules.d/60-sunshine-input.rules'
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# Add user to input group for device access
+sudo usermod -a -G input $USER
+
 # Create systemd user service for Sunshine
 mkdir -p ~/.config/systemd/user
 
-cat > ~/.config/systemd/user/sunshine.service << 'SUNSHINE_SERVICE'
+cat > ~/.config/systemd/user/sunshine.service << SUNSHINE_SERVICE
 [Unit]
 Description=Sunshine Game Streaming Server
-After=network.target
+After=network.target graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/flatpak run dev.lizardbyte.app.Sunshine
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=%h/.Xauthority"
+Environment="SUNSHINE_ENCODER=software"
+Environment="SUNSHINE_CAPTURE_METHOD=x11"
+ExecStart=${SUNSHINE_EXEC}
 Restart=on-failure
 RestartSec=5
 
@@ -308,36 +346,60 @@ RestartSec=5
 WantedBy=default.target
 SUNSHINE_SERVICE
 
+# Create Sunshine config directory and set software encoding
+mkdir -p ~/.config/sunshine
+cat > ~/.config/sunshine/sunshine.conf << 'SUNSHINECONF'
+# VMware optimized configuration
+encoder = software
+capture = x11
+bitrate = 20000
+framerate = 60
+resolution = 1920x1080
+
+# Virtual input settings
+virtual_input = 1
+SUNSHINECONF
+
 # Enable and start Sunshine service
 systemctl --user daemon-reload
 systemctl --user enable sunshine.service
-systemctl --user start sunshine.service
 
-echo "✅ Sunshine service created and started"
-echo "   Access web UI: http://localhost:47990"
-echo "   Username: admin (set password on first visit)"
-
-# Wait for Sunshine to start
-echo "⏳ Waiting for Sunshine to initialize..."
-sleep 5
-
-# Check if Sunshine is running
-if systemctl --user is-active --quiet sunshine.service; then
-    echo "✅ Sunshine is running"
-    echo ""
-    echo "📝 IMPORTANT: Complete setup in web browser:"
-    echo "   1. Open: http://localhost:47990"
-    echo "   2. Set admin password"
-    echo "   3. Configure apps (Desktop, Steam, etc.)"
-    echo ""
-    echo "🔗 Pair Moonlight:"
-    echo "   1. Open Moonlight: flatpak run com.moonlight_stream.Moonlight"
-    echo "   2. It should auto-detect Sunshine on 127.0.0.1"
-    echo "   3. Enter PIN shown in Moonlight into Sunshine web UI"
-    echo ""
+# Only start if we're in a graphical session (not in WSL)
+if [ -n "$DISPLAY" ]; then
+    systemctl --user start sunshine.service
+    
+    echo "✅ Sunshine service created and started"
+    echo "   Access web UI: http://localhost:47990"
+    echo "   Username: admin (set password on first visit)"
+    
+    # Wait for Sunshine to start
+    echo "⏳ Waiting for Sunshine to initialize..."
+    sleep 5
+    
+    # Check if Sunshine is running
+    if systemctl --user is-active --quiet sunshine.service; then
+        echo "✅ Sunshine is running"
+        echo ""
+        echo "📝 IMPORTANT: Complete setup in web browser:"
+        echo "   1. Open: http://localhost:47990"
+        echo "   2. Set admin password"
+        echo "   3. Configure apps (Desktop, Steam, etc.)"
+        echo ""
+        echo "🔗 Pair Moonlight:"
+        echo "   1. Open Moonlight: flatpak run com.moonlight_stream.Moonlight"
+        echo "   2. It should auto-detect Sunshine on 127.0.0.1"
+        echo "   3. Enter PIN shown in Moonlight into Sunshine web UI"
+        echo ""
+    else
+        echo "⚠️  Sunshine service enabled but not running (no display detected)"
+        echo "   Will start automatically after reboot with GUI"
+        echo "   Check logs: journalctl --user -u sunshine.service"
+    fi
 else
-    echo "⚠️  Sunshine failed to start automatically"
-    echo "   Start manually: systemctl --user start sunshine.service"
+    echo "✅ Sunshine service created and enabled"
+    echo "   ⚠️  No display detected (WSL environment)"
+    echo "   Service will start automatically after reboot in VMware/GUI"
+    echo "   Manual start: systemctl --user start sunshine.service"
 fi
 
 # ============================================
