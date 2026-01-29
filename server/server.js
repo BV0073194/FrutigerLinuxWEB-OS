@@ -422,38 +422,47 @@ function launchXpra(appKey, rules, socket, instanceId) {
       return;
     }
 
-    console.log(`✅ Launching ${appCommand} in Xpra session`);
+    // Detect the Xpra display dynamically
+    exec('xpra list 2>/dev/null | grep "^LIVE session at" | head -1 | sed -E "s/.*session at :([0-9]+).*/:\\1/"', (displayErr, displayOut) => {
+      const xpraDisplay = displayOut.trim() || ':1';
+      console.log(`✅ Detected Xpra display: ${xpraDisplay}`);
+      console.log(`✅ Launching ${appCommand} in Xpra session`);
 
-    // Launch the app in the Xpra session using xpra control
-    exec(`xpra control :1 start ${appCommand}`, (launchErr, launchOut) => {
-      if (launchErr) {
-        console.error(`❌ Failed to launch ${appCommand}:`, launchErr);
-        socket.emit("app:error", { 
-          appKey, 
-          instanceId, 
-          error: `Failed to launch ${appCommand}.\n\nError: ${launchErr.message}` 
+      // Launch the app in the Xpra session using xpra control
+      exec(`xpra control ${xpraDisplay} start ${appCommand}`, (launchErr, launchOut) => {
+        if (launchErr) {
+          console.error(`❌ Failed to launch ${appCommand}:`, launchErr);
+          socket.emit("app:error", { 
+            appKey, 
+            instanceId, 
+            error: `Failed to launch ${appCommand}.\n\nError: ${launchErr.message}` 
+          });
+          return;
+        }
+
+        console.log(`✅ ${appCommand} launched:`, launchOut.trim());
+
+        // Get the host from the socket request (use VM IP instead of localhost)
+        const host = socket.request.headers.host || 'localhost:3000';
+        const hostname = host.split(':')[0];
+        
+        // Return the HTML5 client URL using the same hostname the client connected with
+        const url = `http://${hostname}:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
+        
+        nativeSessions.set(instanceId, {
+          appKey,
+          type: "xpra",
+          url,
+          port: 10000,
+          command: appCommand
         });
-        return;
-      }
 
-      console.log(`✅ ${appCommand} launched:`, launchOut.trim());
-
-      // Return the HTML5 client URL
-      const url = `http://localhost:10000/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
-      
-      nativeSessions.set(instanceId, {
-        appKey,
-        type: "xpra",
-        url,
-        port: 10000,
-        command: appCommand
-      });
-
-      socket.emit("app:stream", {
-        instanceId,
-        appKey,
-        type: "xpra",
-        url
+        socket.emit("app:stream", {
+          instanceId,
+          appKey,
+          type: "xpra",
+          url
+        });
       });
     });
   });
