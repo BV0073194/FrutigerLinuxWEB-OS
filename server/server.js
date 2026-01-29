@@ -426,11 +426,24 @@ function launchXpra(appKey, rules, socket, instanceId) {
   xpraPortsInUse.add(port);
   const display = `:${port - 10000}`; // Display :1 for port 10001, :2 for 10002, etc.
   
-  console.log(`🚀 Creating isolated Xpra session for ${appCommand}`);
+  console.log(`🚀 Creating isolated Xpra seamless session for ${appCommand}`);
   console.log(`   Display: ${display}, Port: ${port}`);
 
-  // Start a new Xpra session for this specific app instance
-  const xpraCommand = `xpra start ${display} --daemon=yes --bind-tcp=0.0.0.0:${port} --html=on --start-child="${appCommand}" --exit-with-child=yes`;
+  // Start Xpra in SEAMLESS mode - individual windows, no desktop
+  const xpraCommand = `xpra start ${display} --daemon=yes \
+    --bind-tcp=0.0.0.0:${port} \
+    --html=on \
+    --start-child="${appCommand}" \
+    --exit-with-child=yes \
+    --desktop-scaling=off \
+    --headerbar=no \
+    --border=none \
+    --title="@title@" \
+    --window-close=forward \
+    --splash=no \
+    --notifications=no \
+    --system-tray=no \
+    --cursors=no`;
   
   exec(xpraCommand, (startErr, startOut, startStderr) => {
     if (startErr) {
@@ -445,13 +458,13 @@ function launchXpra(appKey, rules, socket, instanceId) {
       return;
     }
 
-    console.log(`✅ Xpra session started on display ${display}, port ${port}`);
+    console.log(`✅ Xpra seamless session started on display ${display}, port ${port}`);
     console.log(`   Command: ${appCommand}`);
 
-    // Wait for Xpra to fully start
+    // Wait for Xpra to fully start and app to launch
     setTimeout(() => {
-      // Return the HTML5 client URL for this specific instance
-      const url = `http://localhost:${port}/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false`;
+      // Return the HTML5 client URL with seamless mode settings
+      const url = `http://localhost:${port}/index.html?encoding=jpeg&quality=80&keyboard=true&sound=false&desktop_fullscreen=false`;
       
       nativeSessions.set(instanceId, {
         appKey,
@@ -468,7 +481,7 @@ function launchXpra(appKey, rules, socket, instanceId) {
         type: "xpra",
         url
       });
-    }, 2000); // Wait 2 seconds for Xpra to be ready
+    }, 4000); // Wait 4 seconds for Xpra to be ready and app to launch
   });
 }
 
