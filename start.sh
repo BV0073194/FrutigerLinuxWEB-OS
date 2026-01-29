@@ -36,10 +36,20 @@ if [ -z "$DISPLAY" ]; then
         fi
     else
         echo "You're at the console but X isn't running."
-        echo "Starting X server..."
-        startx &
-        sleep 3
-        export DISPLAY=:0
+        echo ""
+        echo "The system should auto-start X on login."
+        echo "Try:"
+        echo "  1. Logout and login again (type: exit)"
+        echo "  2. Or just reboot: sudo reboot"
+        echo ""
+        read -p "Reboot now? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            sudo reboot
+        else
+            echo "Manual start not recommended. Use reboot instead."
+            exit 1
+        fi
     fi
 fi
 
