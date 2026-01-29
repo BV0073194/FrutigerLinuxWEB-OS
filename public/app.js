@@ -855,11 +855,6 @@ function closeWindow(win) {
     style.remove();
   });
   
-  // Close Xpra popup window if it exists
-  if (win.xpraWindow && !win.xpraWindow.closed) {
-    win.xpraWindow.close();
-  }
-  
   appInstances[appKey] = appInstances[appKey].filter((w) => w !== win);
   if (win.taskbarIcon) {
     win.taskbarIcon.remove();
@@ -1446,7 +1441,7 @@ function attachNativeApp(win, rules) {
     appKey: win.dataset.appKey,
     instanceId: instanceId,
     command: rules.command,
-    stream: rules.stream || "xpra"
+    stream: rules.stream || "vnc"
   });
 }
 
